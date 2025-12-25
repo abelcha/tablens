@@ -1,5 +1,11 @@
-opentui
 node_modules
 
 node_modules.asif
 node_modules.asif
+.DS_Store
+.trash/
+opentui
+
+*.xml
+*.csv
+*.parquet
