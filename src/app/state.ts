@@ -67,16 +67,26 @@ export function reducer(
     }
     case "PAGE_UP": {
       const next = { ...state };
-      next.cursorRow = Math.max(0, state.cursorRow - action.pageSize);
-      next.rowsOffset = Math.max(0, state.rowsOffset - action.pageSize);
+      const isAtTop = state.cursorRow === state.rowsOffset;
+      if (isAtTop) {
+        next.cursorRow = Math.max(0, state.cursorRow - action.pageSize);
+        next.rowsOffset = Math.max(0, state.rowsOffset - action.pageSize);
+      } else {
+        // Move cursor to top of current page
+        next.cursorRow = state.rowsOffset;
+      }
       return next;
     }
     case "PAGE_DOWN": {
       const next = { ...state };
-      next.cursorRow = Math.min(state.totalRowCount - 1, state.cursorRow + action.pageSize);
-      if (next.cursorRow >= state.rowsOffset + action.pageSize) {
-        next.rowsOffset = next.cursorRow - action.pageSize + 1;
-        if (next.rowsOffset < 0) next.rowsOffset = 0;
+      const lastVisibleRow = state.rowsOffset + action.pageSize - 3;
+      const isAtBottom = state.cursorRow >= lastVisibleRow;
+      if (isAtBottom) {
+        next.cursorRow = Math.min(state.totalRowCount - 1, state.cursorRow + action.pageSize);
+        next.rowsOffset =
+          next.cursorRow - action.pageSize + 1 < 0 ? 0 : next.cursorRow - action.pageSize + 1;
+      } else {
+        next.cursorRow = Math.min(state.totalRowCount - 1, lastVisibleRow);
       }
       return next;
     }

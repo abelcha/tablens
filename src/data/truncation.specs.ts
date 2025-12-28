@@ -19,13 +19,13 @@ describe("DuckDBDataSource Truncation", () => {
   it("should truncate long columns to 256 chars", async () => {
     const source = new DuckDBDataSource();
     await source.connect(TEST_LONG_CSV);
-    
+
     const rows = await source.getRows(0, 1);
     const dataCol = rows[0][1];
-    
+
     expect(dataCol.length).toBe(256);
     expect(dataCol).toBe("A".repeat(256));
-    
+
     await source.close();
   });
 });

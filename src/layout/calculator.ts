@@ -6,33 +6,38 @@ export const MAX_COLUMN_WIDTH_FRACTION = 0.3;
 function percentile(sortedValues: number[], p: number): number {
   if (sortedValues.length === 0) return 0;
   if (sortedValues.length === 1) return sortedValues[0]!;
-  
+
   const index = (sortedValues.length - 1) * p;
   const lower = Math.floor(index);
   const upper = Math.ceil(index);
   const weight = index - lower;
-  
+
   if (lower === upper) {
     return sortedValues[lower]!;
   }
-  
+
   return Math.ceil(sortedValues[lower]! * (1 - weight) + sortedValues[upper]! * weight);
 }
 
-export function computeColumnWidths(headers: string[], rows: string[][], tableWidth: number, columnOverrides: Record<number, number> = {}) {
+export function computeColumnWidths(
+  headers: string[],
+  rows: string[][],
+  tableWidth: number,
+  columnOverrides: Record<number, number> = {},
+) {
   const sampleSize = Math.min(200, rows.length);
   const sampleRows = rows.slice(0, sampleSize);
-  
+
   const columnWidthsData: number[][] = headers.map((h, i) => {
     if (columnOverrides[i] !== undefined) return [];
     return [h.length];
   });
 
-  sampleRows.forEach(row => {
+  sampleRows.forEach((row) => {
     row.forEach((cell, i) => {
       if (i >= columnWidthsData.length || columnOverrides[i] !== undefined) return;
-      const lines = (cell || '').split('\n');
-      lines.forEach(line => {
+      const lines = (cell || "").split("\n");
+      lines.forEach((line) => {
         const valueLen = line.length;
         columnWidthsData[i]!.push(valueLen);
       });
@@ -72,7 +77,11 @@ export function computeColumnWidths(headers: string[], rows: string[][], tableWi
   return columnWidths;
 }
 
-export function redistributeWidthsAfterClipping(columnWidths: number[], areaWidth: number, clippedColumns: [number, number][]) {
+export function redistributeWidthsAfterClipping(
+  columnWidths: number[],
+  areaWidth: number,
+  clippedColumns: [number, number][],
+) {
   if (clippedColumns.length === 0) return;
 
   const totalWidth = columnWidths.reduce((a, b) => a + b, 0);
@@ -85,7 +94,7 @@ export function redistributeWidthsAfterClipping(columnWidths: number[], areaWidt
 
   for (const [i, widthBeforeClipping] of clippedColumns) {
     if (columnWidths[i] === undefined) continue;
-    
+
     const adjustment = Math.floor(remainingWidth / numColumnsToAdjust);
     const widthAfterAdjustment = Math.min(widthBeforeClipping, columnWidths[i]! + adjustment);
     const addedWidth = widthAfterAdjustment - columnWidths[i]!;
@@ -96,18 +105,18 @@ export function redistributeWidthsAfterClipping(columnWidths: number[], areaWidt
 }
 
 export function computeRowHeights(rows: string[][], columnWidths: number[], wrapMode: WrapMode) {
-  if (wrapMode === 'disabled') {
+  if (wrapMode === "disabled") {
     return rows.map(() => 1);
   }
 
-  return rows.map(row => {
+  return rows.map((row) => {
     let height = 1;
     row.forEach((cell, i) => {
       const colWidth = columnWidths[i];
       if (colWidth === undefined) return;
-      
+
       const width = colWidth - NUM_SPACES_BETWEEN_COLUMNS;
-      const wrapped = wrapText(cell || '', width, wrapMode === 'words');
+      const wrapped = wrapText(cell || "", width, wrapMode === "words");
       height = Math.max(height, wrapped.length);
     });
     return height;

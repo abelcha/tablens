@@ -87,9 +87,9 @@ async function main() {
     },
   });
 
-  console.log("This appears in the overlay")
-  console.error("Errors are color-coded red")
-  console.warn("Warnings appear in yellow")
+  console.log("This appears in the overlay");
+  console.error("Errors are color-coded red");
+  console.warn("Warnings appear in yellow");
 
   const table = new BoxRenderable(renderer, {
     id: "table",
@@ -184,7 +184,8 @@ async function main() {
     const tableW = screenW - 2;
     // table.height is 100% of available space above console/status
     // table content height is box height minus header/separator
-    const tableH = (typeof table.height === "number" ? table.height : renderer.terminalHeight - 1) - 2;
+    const tableH =
+      (typeof table.height === "number" ? table.height : renderer.terminalHeight - 1) - 2;
 
     if (!headers || headers.length === 0) return;
     if (totalRowCount === 0) {
@@ -199,7 +200,7 @@ async function main() {
     state.cursorCol = Math.max(0, Math.min(headers.length - 1, state.cursorCol));
 
     // 2. Vertical Scroll logic
-    if (state.selectionMode !== 'column' && state.cursorRow < state.rowsOffset) {
+    if (state.selectionMode !== "column" && state.cursorRow < state.rowsOffset) {
       state.rowsOffset = state.cursorRow;
     }
     // We can't easily know if cursorRow > visible bottom without heights.
@@ -208,14 +209,14 @@ async function main() {
     // Actually, we need to fetch a chunk starting at rowsOffset.
 
     // FETCH LOGIC
-    // We fetch tableH + X rows to ensure we fill the screen. 
+    // We fetch tableH + X rows to ensure we fill the screen.
     // Since wrapMode might make rows tall, fetching tableH rows might be enough or too much.
     // Let's fetch tableH * 2 to be safe for now (lazy but effective).
     const fetchLimit = tableH * 2;
 
     // Only fetch if we moved
     if (state.rowsOffset !== lastRenderedOffset || state.visibleRows.length === 0) {
-      // Note: isFetching check is to prevent overlapping calls if we want to debounce, 
+      // Note: isFetching check is to prevent overlapping calls if we want to debounce,
       // but for now we await implicitly or just let it race (DuckDB is single threaded mostly in node-api connection?)
       // Let's simple await.
 
@@ -229,7 +230,7 @@ async function main() {
     }
 
     const rows = state.visibleRows;
-    if (!rows || rows.length === 0 && totalRowCount > 0) {
+    if (!rows || (rows.length === 0 && totalRowCount > 0)) {
       // This can happen if totalRowCount > 0 but the fetched chunk is empty (e.g., at the very end)
       // Or if the fetch failed silently.
       statusText.content = `Error: No rows fetched for offset ${state.rowsOffset}. Total: ${totalRowCount}`;
@@ -237,20 +238,24 @@ async function main() {
     }
 
     // 3. Horizontal scrolling & Widths (One-pass on visible rows)
-    if (state.selectionMode !== 'row' && state.cursorCol < state.colsOffset) {
+    if (state.selectionMode !== "row" && state.cursorCol < state.colsOffset) {
       state.colsOffset = state.cursorCol;
     }
 
     let dispHeaders = headers.slice(state.colsOffset);
     // Compute widths based on VISIBLE rows only
-    let colWidths = computeColumnWidths(dispHeaders, rows.map(r => r.slice(state.colsOffset)), tableW);
+    let colWidths = computeColumnWidths(
+      dispHeaders,
+      rows.map((r) => r.slice(state.colsOffset)),
+      tableW,
+    );
 
     // Scroll right if cursor is past visible columns
     // Check if we need to scroll right (only if NOT in row mode)
     let loops = 0;
     let relC = state.cursorCol - state.colsOffset;
 
-    if (state.selectionMode !== 'row') {
+    if (state.selectionMode !== "row") {
       let tw = 0;
       for (let i = 0; i < relC; i++) tw += colWidths[i] || 0;
 
@@ -258,7 +263,11 @@ async function main() {
         state.colsOffset++;
         relC = state.cursorCol - state.colsOffset;
         dispHeaders = headers.slice(state.colsOffset);
-        colWidths = computeColumnWidths(dispHeaders, rows.map(r => r.slice(state.colsOffset)), tableW);
+        colWidths = computeColumnWidths(
+          dispHeaders,
+          rows.map((r) => r.slice(state.colsOffset)),
+          tableW,
+        );
         tw = 0;
         for (let i = 0; i < relC; i++) tw += colWidths[i] || 0;
         if (state.colsOffset >= headers.length - 1) break;
@@ -268,9 +277,14 @@ async function main() {
 
     // 4. Vertical Row Heights
     // We computed heights for the fetched chunk
-    const rowHeights = computeRowHeights(rows.map(r => r.slice(state.colsOffset, state.colsOffset + colWidths.length)), colWidths, state.wrapMode);
+    const rowHeights = computeRowHeights(
+      rows.map((r) => r.slice(state.colsOffset, state.colsOffset + colWidths.length)),
+      colWidths,
+      state.wrapMode,
+    );
 
-    let curH = 0, visCount = 0;
+    let curH = 0,
+      visCount = 0;
     for (const h of rowHeights) {
       if (curH + h > tableH && visCount > 0) break;
       curH += h;
@@ -290,19 +304,27 @@ async function main() {
       state.rowsOffset += diff;
       // Recursive call to re-fetch and re-render
       // But preventing infinite recursion if something is wrong
-      if (state.rowsOffset < totalRowCount && loops < 1000) { // Add loop guard for recursion
+      if (state.rowsOffset < totalRowCount && loops < 1000) {
+        // Add loop guard for recursion
         loops++;
         return renderTable();
       }
     }
 
-    const visRows = rows.slice(0, visCount).map(r => r.slice(state.colsOffset));
+    const visRows = rows.slice(0, visCount).map((r) => r.slice(state.colsOffset));
     const visHeights = rowHeights.slice(0, visCount);
 
     // 5. Update UI
     tableText.content = parseBlessedTags(
-      buildHeaderLine(dispHeaders, colWidths) + buildSeparatorLine(colWidths) +
-      visRows.map((r, i) => Array.from({ length: visHeights[i] || 1 }, (_, h) => buildRowLine(r, colWidths, state.wrapMode, h)).join('')).join('')
+      buildHeaderLine(dispHeaders, colWidths) +
+        buildSeparatorLine(colWidths) +
+        visRows
+          .map((r, i) =>
+            Array.from({ length: visHeights[i] || 1 }, (_, h) =>
+              buildRowLine(r, colWidths, state.wrapMode, h),
+            ).join(""),
+          )
+          .join(""),
     );
 
     const relR = state.cursorRow - state.rowsOffset;
@@ -321,7 +343,7 @@ async function main() {
       visCount,
       visHeights,
       colWidths,
-      tableH
+      tableH,
     );
 
     Object.assign(cursorOverlay, cursorStyle);
@@ -340,30 +362,36 @@ async function main() {
     visCount: number,
     visHeights: number[],
     colWidths: number[],
-    tableH: number
-  ): { visible: boolean; top?: number; left?: number | string; width?: number | string; height?: number } {
+    tableH: number,
+  ): {
+    visible: boolean;
+    top?: number;
+    left?: number | string;
+    width?: number | string;
+    height?: number;
+  } {
     switch (mode) {
-      case 'row': {
+      case "row": {
         const visible = relR >= 0 && relR < visCount;
         return {
           visible,
           top: 3 + visHeights.slice(0, relR).reduce((a, b) => a + b, 0),
           left: 0,
           width: "100%",
-          height: visHeights[relR] || 0
+          height: visHeights[relR] || 0,
         };
       }
-      case 'column': {
+      case "column": {
         const visible = relC >= 0 && relC < colWidths.length;
         return {
           visible,
           top: 1,
           left: 1 + colWidths.slice(0, relC).reduce((a, b) => a + b, 0),
           width: colWidths[relC] || 0,
-          height: tableH + 2
+          height: tableH + 2,
         };
       }
-      case 'cell':
+      case "cell":
       default: {
         const visible = relR >= 0 && relR < visCount && relC >= 0 && relC < colWidths.length;
         return {
@@ -371,7 +399,7 @@ async function main() {
           top: 3 + visHeights.slice(0, relR).reduce((a, b) => a + b, 0),
           left: 1 + colWidths.slice(0, relC).reduce((a, b) => a + b, 0),
           width: colWidths[relC] || 0,
-          height: visHeights[relR] || 0
+          height: visHeights[relR] || 0,
         };
       }
     }
@@ -408,11 +436,11 @@ async function main() {
     switch (key.name) {
       case "up":
       case "k":
-        if (state.selectionMode === 'column') {
+        if (state.selectionMode === "column") {
           // In column mode, up/down moves the SCROLL, not the cursor (cursor stays on same column visually, but functionally we just scroll)
           // Actually, if we want to "scroll the view" but keep "bar on same column", we just change rowsOffset?
           // But cursorRow tracks the *selection*. In column mode, rows aren't selected. The column is.
-          // So cursorRow is irrelevant? 
+          // So cursorRow is irrelevant?
           // Guide says: "Vertical Nav (↓/↑): Scrolls the view up/down. The selection "bar" stays on the same column."
           state.rowsOffset = Math.max(0, state.rowsOffset - 1);
         } else {
@@ -425,7 +453,7 @@ async function main() {
         break;
       case "down":
       case "j":
-        if (state.selectionMode === 'column') {
+        if (state.selectionMode === "column") {
           // Scroll view down
           state.rowsOffset = Math.min(totalRowCount - 1, state.rowsOffset + 1);
         } else {
@@ -434,7 +462,7 @@ async function main() {
         break;
       case "left":
       case "h":
-        if (state.selectionMode === 'row') {
+        if (state.selectionMode === "row") {
           // "Scrolls the view left/right. The selection "bar" stays on the same row."
           state.colsOffset = Math.max(0, state.colsOffset - 1);
         } else {
@@ -447,7 +475,7 @@ async function main() {
         break;
       case "right":
       case "l":
-        if (state.selectionMode === 'row') {
+        if (state.selectionMode === "row") {
           // Scroll view right
           state.colsOffset = Math.min(numCols - 1, state.colsOffset + 1);
         } else {
@@ -459,16 +487,19 @@ async function main() {
         state.rowsOffset = Math.max(0, state.rowsOffset - (renderer.terminalHeight - 4));
         break;
       case "pagedown":
-        state.cursorRow = Math.min(totalRowCount - 1, state.cursorRow + (renderer.terminalHeight - 4));
+        state.cursorRow = Math.min(
+          totalRowCount - 1,
+          state.cursorRow + (renderer.terminalHeight - 4),
+        );
         if (state.cursorRow >= state.rowsOffset + (renderer.terminalHeight - 4)) {
           state.rowsOffset = state.cursorRow - (renderer.terminalHeight - 4) + 1;
           if (state.rowsOffset < 0) state.rowsOffset = 0;
         }
         break;
       case "tab":
-        if (state.selectionMode === 'row') state.selectionMode = 'column';
-        else if (state.selectionMode === 'column') state.selectionMode = 'cell';
-        else state.selectionMode = 'row';
+        if (state.selectionMode === "row") state.selectionMode = "column";
+        else if (state.selectionMode === "column") state.selectionMode = "cell";
+        else state.selectionMode = "row";
         break;
     }
     await renderTable();

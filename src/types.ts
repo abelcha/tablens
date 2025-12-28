@@ -3,9 +3,9 @@ export interface StateData {
   rows: string[][];
 }
 
-export type WrapMode = 'chars' | 'words' | 'disabled';
+export type WrapMode = "chars" | "words" | "disabled";
 
-export type SelectionMode = 'row' | 'column' | 'cell';
+export type SelectionMode = "row" | "column" | "cell";
 
 export interface State {
   rowsOffset: number;
