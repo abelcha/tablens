@@ -379,8 +379,14 @@ async function main() {
   // }
 
   renderer.keyInput.on("keypress", async (key: KeyEvent) => {
-    if (key.ctrl && key.name === "c") process.exit(0);
-    if (key.name === "q") process.exit(0);
+    if (key.ctrl && key.name === "c") {
+      renderer.destroy();
+      process.exit(0);
+    }
+    if (key.name === "q") {
+      renderer.destroy();
+      process.exit(0);
+    }
 
     if (key.ctrl && key.name === "`") {
       (renderer.console as any).visible = !(renderer.console as any).visible;

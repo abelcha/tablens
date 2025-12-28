@@ -95,6 +95,7 @@ function StatusLine({
     cursorCol,
     numCols,
     counter,
+    gutterWidth,
 }: {
     file: string;
     cursorRow: number;
@@ -102,9 +103,10 @@ function StatusLine({
     cursorCol: number;
     numCols: number;
     counter: number;
+    gutterWidth: number;
 }) {
     const content = `{white}${file}{/white} {gray}[Row ${cursorRow + 1}/${totalRowCount}, Col ${cursorCol + 1}/${numCols}]{/gray} {yellow}C: ${counter}{/yellow}`;
-    return <text content={parseBlessedTags(content)} />;
+    return <text content={parseBlessedTags(content)} left={1 + gutterWidth} />;
 }
 
 function TablensApp({ file, source }: { file: string; source: DuckDBDataSource }) {
@@ -159,89 +161,89 @@ function TablensApp({ file, source }: { file: string; source: DuckDBDataSource }
 
     const { headers, totalRowCount, rowsOffset, colsOffset, cursorRow, cursorCol, selectionMode, wrapMode, visibleRows } = state;
 
-    // Calculate rendering logic (clamping, fetching, layout)
+    // Logic to clamp offsets and fetch data when cursor or offsets change
+    const updateLayoutAndFetch = async (
+        newState: State,
+        tW: number,
+        tH: number
+    ): Promise<Partial<State>> => {
+        const { headers, totalRowCount, selectionMode, cursorRow, cursorCol, wrapMode } = newState;
+        let { rowsOffset, colsOffset, visibleRows } = newState;
+
+        const fetchLimit = tH * 2;
+
+        // 1. Vertical scrolling (if needed by cursor)
+        if (selectionMode !== 'column' && cursorRow < rowsOffset) {
+            rowsOffset = cursorRow;
+        }
+
+        // 2. Fetch if offset changed or rows empty
+        if (rowsOffset !== lastRenderedOffset.current || visibleRows.length === 0) {
+            try {
+                visibleRows = await source.getRows(rowsOffset, fetchLimit);
+                lastRenderedOffset.current = rowsOffset;
+            } catch (e) {
+                console.error("Error fetching rows:", e);
+            }
+        }
+
+        // 3. Horizontal scrolling (if needed by cursor)
+        if (selectionMode !== 'row' && cursorCol < colsOffset) {
+            colsOffset = cursorCol;
+        }
+
+        let dispHeaders = headers.slice(colsOffset);
+        let colWidths = computeColumnWidths(dispHeaders, visibleRows.map(r => r.slice(colsOffset)), tW);
+
+        if (selectionMode !== 'row') {
+            let relC = cursorCol - colsOffset;
+            let tw = 0;
+            for (let i = 0; i < relC; i++) tw += colWidths[i] || 0;
+
+            while ((relC >= colWidths.length || tw + (colWidths[relC] || 0) > tW) && colsOffset < headers.length - 1) {
+                colsOffset++;
+                relC = cursorCol - colsOffset;
+                dispHeaders = headers.slice(colsOffset);
+                colWidths = computeColumnWidths(dispHeaders, visibleRows.map(r => r.slice(colsOffset)), tW);
+                tw = 0;
+                for (let i = 0; i < relC; i++) tw += colWidths[i] || 0;
+            }
+        }
+
+        // 4. Vertical "auto-scroll" if cursor past bottom
+        const rowHeights = computeRowHeights(visibleRows.map(r => r.slice(colsOffset, colsOffset + colWidths.length)), colWidths, wrapMode);
+        let curH = 0, visCount = 0;
+        for (const h of rowHeights) {
+            if (curH + h > tH && visCount > 0) break;
+            curH += h;
+            visCount++;
+        }
+
+        const relativeCursor = cursorRow - rowsOffset;
+        if (relativeCursor >= visCount && selectionMode !== 'column') {
+            const diff = relativeCursor - visCount + 1;
+            rowsOffset += diff;
+            // Note: If we scroll down here, we don't immediately re-fetch in this pass,
+            // but the next render/effect will catch it, or we could loop one more time.
+            // For simplicity, let's just update offsets.
+        }
+
+        return { rowsOffset, colsOffset, visibleRows };
+    };
+
+    // Effect for data fetch on mount and resize
     useEffect(() => {
         if (headers.length === 0 || totalRowCount === 0) return;
 
-        async function updateTable() {
-            const tableH = renderer.terminalHeight - 3;
-            const fetchLimit = tableH * 2;
+        const tableH = renderer.terminalHeight - 3;
+        const tableW = renderer.terminalWidth - 2;
 
-            let nextRowsOffset = rowsOffset;
-            let nextVisibleRows = visibleRows;
-
-            // Vertical Scroll logic
-            if (selectionMode !== 'column' && cursorRow < nextRowsOffset) {
-                nextRowsOffset = cursorRow;
+        updateLayoutAndFetch(state, tableW, tableH).then(updates => {
+            if (updates.rowsOffset !== state.rowsOffset || updates.colsOffset !== state.colsOffset || updates.visibleRows !== state.visibleRows) {
+                setState(s => ({ ...s, ...updates }));
             }
-
-            // Fetch if needed
-            if (nextRowsOffset !== lastRenderedOffset.current || nextVisibleRows.length === 0) {
-                try {
-                    nextVisibleRows = await source.getRows(nextRowsOffset, fetchLimit);
-                    lastRenderedOffset.current = nextRowsOffset;
-                } catch (e) {
-                    console.error("Error fetching rows:", e);
-                    return;
-                }
-            }
-
-            // Layout calculations
-            const tableW = renderer.terminalWidth - 2;
-            let nextColsOffset = colsOffset;
-            if (selectionMode !== 'row' && cursorCol < nextColsOffset) {
-                nextColsOffset = cursorCol;
-            }
-
-            let dispHeaders = headers.slice(nextColsOffset);
-            let colWidths = computeColumnWidths(dispHeaders, nextVisibleRows.map(r => r.slice(nextColsOffset)), tableW);
-
-            // Horizontal scroll clamping
-            if (selectionMode !== 'row') {
-                let relC = cursorCol - nextColsOffset;
-                let tw = 0;
-                for (let i = 0; i < relC; i++) tw += colWidths[i] || 0;
-
-                while ((relC >= colWidths.length || tw + (colWidths[relC] || 0) > tableW) && nextColsOffset < headers.length - 1) {
-                    nextColsOffset++;
-                    relC = cursorCol - nextColsOffset;
-                    dispHeaders = headers.slice(nextColsOffset);
-                    colWidths = computeColumnWidths(dispHeaders, nextVisibleRows.map(r => r.slice(nextColsOffset)), tableW);
-                    tw = 0;
-                    for (let i = 0; i < relC; i++) tw += colWidths[i] || 0;
-                }
-            }
-
-            const rowHeights = computeRowHeights(nextVisibleRows.map(r => r.slice(nextColsOffset, nextColsOffset + colWidths.length)), colWidths, wrapMode);
-
-            let curH = 0, visCount = 0;
-            for (const h of rowHeights) {
-                if (curH + h > tableH && visCount > 0) break;
-                curH += h;
-                visCount++;
-            }
-
-            const relativeCursor = cursorRow - nextRowsOffset;
-            if (relativeCursor >= visCount && selectionMode !== 'column') {
-                const diff = relativeCursor - visCount + 1;
-                nextRowsOffset += diff;
-            }
-
-            // Update state if changed
-            if (nextRowsOffset !== rowsOffset || nextColsOffset !== colsOffset || nextVisibleRows !== visibleRows) {
-                setState(s => ({
-                    ...s,
-                    rowsOffset: nextRowsOffset,
-                    colsOffset: nextColsOffset,
-                    visibleRows: nextVisibleRows
-                }));
-            }
-
-            rowsRenderedAccumulator.current += visCount;
-        }
-
-        updateTable();
-    }, [headers, totalRowCount, rowsOffset, colsOffset, cursorRow, cursorCol, selectionMode, wrapMode, source, renderer.terminalHeight, renderer.terminalWidth]);
+        });
+    }, [renderer.terminalHeight, renderer.terminalWidth, headers, totalRowCount]);
 
     // Derived values for rendering
     const tableValues = useMemo(() => {
@@ -298,7 +300,7 @@ function TablensApp({ file, source }: { file: string; source: DuckDBDataSource }
                 cursorStyle = {
                     visible,
                     top: 1,
-                    left: 1 + colWidths.slice(0, relC).reduce((a, b) => a + b, 0),
+                    left: 1 + gutterWidth + colWidths.slice(0, relC).reduce((a, b) => a + b, 0),
                     width: colWidths[relC] || 0,
                     height: tableH + 2
                 };
@@ -310,7 +312,7 @@ function TablensApp({ file, source }: { file: string; source: DuckDBDataSource }
                 cursorStyle = {
                     visible,
                     top: 3 + visHeights.slice(0, relR).reduce((a, b) => a + b, 0),
-                    left: 1 + colWidths.slice(0, relC).reduce((a, b) => a + b, 0),
+                    left: 1 + gutterWidth + colWidths.slice(0, relC).reduce((a, b) => a + b, 0),
                     width: colWidths[relC] || 0,
                     height: visHeights[relR] || 0
                 };
@@ -322,8 +324,14 @@ function TablensApp({ file, source }: { file: string; source: DuckDBDataSource }
     }, [headers, totalRowCount, visibleRows, colsOffset, rowsOffset, cursorRow, cursorCol, selectionMode, wrapMode, renderer.terminalWidth, renderer.terminalHeight]);
 
     useKeyboard((key: KeyEvent) => {
-        if (key.ctrl && key.name === "c") process.exit(0);
-        if (key.name === "q") process.exit(0);
+        if (key.ctrl && key.name === "c") {
+            renderer.destroy();
+            process.exit(0);
+        }
+        if (key.name === "q") {
+            renderer.destroy();
+            process.exit(0);
+        }
 
         if (key.ctrl && key.name === "`") {
             renderer.console.toggle();
@@ -339,6 +347,9 @@ function TablensApp({ file, source }: { file: string; source: DuckDBDataSource }
             return;
         }
 
+        const tableW = renderer.terminalWidth - 2;
+        const tableH = renderer.terminalHeight - 3;
+
         setState(prev => {
             const { totalRowCount, headers, selectionMode, cursorRow, cursorCol, rowsOffset, colsOffset } = prev;
             const numCols = headers.length;
@@ -351,9 +362,6 @@ function TablensApp({ file, source }: { file: string; source: DuckDBDataSource }
                         next.rowsOffset = Math.max(0, rowsOffset - 1);
                     } else {
                         next.cursorRow = Math.max(0, cursorRow - 1);
-                        if (next.cursorRow < next.rowsOffset) {
-                            next.rowsOffset = next.cursorRow;
-                        }
                     }
                     break;
                 case "down":
@@ -370,9 +378,6 @@ function TablensApp({ file, source }: { file: string; source: DuckDBDataSource }
                         next.colsOffset = Math.max(0, colsOffset - 1);
                     } else {
                         next.cursorCol = Math.max(0, cursorCol - 1);
-                        if (next.cursorCol < next.colsOffset) {
-                            next.colsOffset = next.cursorCol;
-                        }
                     }
                     break;
                 case "right":
@@ -403,6 +408,12 @@ function TablensApp({ file, source }: { file: string; source: DuckDBDataSource }
                     setCounter(c => c + 1);
                     break;
             }
+
+            // Proactively calculate layout updates to avoid 1-render latency
+            updateLayoutAndFetch(next, tableW, tableH).then(updates => {
+                setState(s => ({ ...s, ...updates }));
+            });
+
             return next;
         });
     });
@@ -415,6 +426,9 @@ function TablensApp({ file, source }: { file: string; source: DuckDBDataSource }
                 left={0}
                 width="100%"
                 height={renderer.terminalHeight - 1 - (renderer.console.visible ? renderer.console.bounds.height : 0)}
+                border={true}
+                borderStyle="single"
+                borderColor="#888888"
             >
                 <text
                     id="table-text"
@@ -447,6 +461,7 @@ function TablensApp({ file, source }: { file: string; source: DuckDBDataSource }
                     cursorCol={cursorCol}
                     numCols={headers.length}
                     counter={counter}
+                    gutterWidth={String(totalRowCount).length + 2}
                 />
             </box>
         </>
