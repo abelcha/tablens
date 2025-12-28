@@ -1,7 +1,8 @@
 import type { WrapMode } from "../types";
-import { bold } from "@opentui/core";
 
-export const NUM_SPACES_BETWEEN_COLUMNS = 4;
+export const LEFT_PADDING = 1;
+export const RIGHT_PADDING = 1;
+export const NUM_SPACES_BETWEEN_COLUMNS = LEFT_PADDING + RIGHT_PADDING;
 
 export function wrapText(text: string, width: number, wordWrap: boolean): string[] {
   if (width <= 0) return ['…'];
@@ -54,25 +55,46 @@ export function wrapText(text: string, width: number, wordWrap: boolean): string
   return lines.length > 0 ? lines : [''];
 }
 
-export function buildHeaderLine(headers: string[], widths: number[], gutterWidth: number = 0) {
+export function buildHeaderLine(headers: string[], widths: number[], gutterWidth: number = 0, selectedColIdx?: number, hideSelected: boolean = false) {
   let line = '';
   if (gutterWidth > 0) {
-    line += ' '.repeat(gutterWidth);
+    line += ' '.repeat(gutterWidth + 2); // Align with data columns (past "│ ")
   }
   headers.forEach((h, i) => {
     const width = widths[i] || 0;
     const usableWidth = Math.max(0, width - NUM_SPACES_BETWEEN_COLUMNS);
+    const isSelected = selectedColIdx !== undefined && i === selectedColIdx;
+    
+    if (isSelected && hideSelected) {
+      line += ' '.repeat(width);
+      return;
+    }
+    
     let text = h;
-    if (text.length > usableWidth) text = text.substring(0, usableWidth - 1) + '…';
-    const pad = ' '.repeat(Math.max(0, width - text.length));
-    line += `{yellow}${text}{/yellow}` + pad;
+    if (h.length > usableWidth) {
+      text = text.substring(0, usableWidth - 1) + '…';
+    }
+    const leftPad = ' '.repeat(LEFT_PADDING);
+    const rightPad = ' '.repeat(Math.max(0, width - text.length - LEFT_PADDING));
+    if (isSelected) {
+      line += leftPad + `{orange}{bold}{underline}${text}{/underline}{/bold}{/orange}` + rightPad;
+    } else {
+      line += leftPad + `{orange}{bold}${text}{/bold}{/orange}` + rightPad;
+    }
   });
   return line + '\n';
 }
 
 export function buildSeparatorLine(widths: number[], gutterWidth: number = 0) {
-  const gutter = gutterWidth > 0 ? '─'.repeat(gutterWidth) : '';
-  return gutter + widths.map(w => '─'.repeat(w)).join('') + '\n';
+  const gutter = gutterWidth > 0 ? '─'.repeat(gutterWidth) + '┬' : '';
+  const line = gutter + widths.map(w => '─'.repeat(w)).join('');
+  return `{blue}${line}{/blue}\n`;
+}
+
+export function buildBottomSeparatorLine(widths: number[], gutterWidth: number = 0) {
+  const gutter = gutterWidth > 0 ? '─'.repeat(gutterWidth) + '┴' : '';
+  const line = gutter + widths.map(w => '─'.repeat(w)).join('');
+  return `{blue}${line}{/blue}\n`;
 }
 
 export function buildRowLine(row: string[], widths: number[], wrapMode: WrapMode, lineIdx = 0, rowNumber?: number, gutterWidth: number = 0) {
@@ -82,9 +104,9 @@ export function buildRowLine(row: string[], widths: number[], wrapMode: WrapMode
     if (lineIdx === 0 && rowNumber !== undefined) {
       const numStr = String(rowNumber);
       const pad = ' '.repeat(Math.max(0, gutterWidth - numStr.length));
-      line += `{gray}${numStr}{/gray}${pad}`;
+      line += `{blue}${numStr}{/blue}${pad}{blue}│{/blue} `;
     } else {
-      line += ' '.repeat(gutterWidth);
+      line += ' '.repeat(gutterWidth) + `{blue}│{/blue} `;
     }
   }
 
@@ -102,8 +124,9 @@ export function buildRowLine(row: string[], widths: number[], wrapMode: WrapMode
 
     if (text.length > usableWidth) text = text.substring(0, usableWidth - 1) + '…';
 
-    const pad = ' '.repeat(Math.max(0, width - text.length));
-    line += text + pad;
+    const leftPad = ' '.repeat(LEFT_PADDING);
+    const rightPad = ' '.repeat(Math.max(0, width - text.length - LEFT_PADDING));
+    line += leftPad + `{lightgray}${text}{/lightgray}` + rightPad;
   });
   return line + '\n';
 }

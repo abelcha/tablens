@@ -3,20 +3,53 @@ import { wrapText, NUM_SPACES_BETWEEN_COLUMNS } from "../utils/text";
 
 export const MAX_COLUMN_WIDTH_FRACTION = 0.3;
 
-export function computeColumnWidths(headers: string[], rows: string[][], tableWidth: number) {
-  let columnWidths = headers.map(h => h.length);
+function percentile(sortedValues: number[], p: number): number {
+  if (sortedValues.length === 0) return 0;
+  if (sortedValues.length === 1) return sortedValues[0]!;
+  
+  const index = (sortedValues.length - 1) * p;
+  const lower = Math.floor(index);
+  const upper = Math.ceil(index);
+  const weight = index - lower;
+  
+  if (lower === upper) {
+    return sortedValues[lower]!;
+  }
+  
+  return Math.ceil(sortedValues[lower]! * (1 - weight) + sortedValues[upper]! * weight);
+}
 
-  rows.forEach(row => {
+export function computeColumnWidths(headers: string[], rows: string[][], tableWidth: number, columnOverrides: Record<number, number> = {}) {
+  const sampleSize = Math.min(200, rows.length);
+  const sampleRows = rows.slice(0, sampleSize);
+  
+  const columnWidthsData: number[][] = headers.map((h, i) => {
+    if (columnOverrides[i] !== undefined) return [];
+    return [h.length];
+  });
+
+  sampleRows.forEach(row => {
     row.forEach((cell, i) => {
-      if (i >= columnWidths.length) return;
+      if (i >= columnWidthsData.length || columnOverrides[i] !== undefined) return;
       const lines = (cell || '').split('\n');
       lines.forEach(line => {
         const valueLen = line.length;
-        if (columnWidths[i]! < valueLen) {
-          columnWidths[i] = valueLen;
-        }
+        columnWidthsData[i]!.push(valueLen);
       });
     });
+  });
+
+  const MIN_COLUMN_WIDTH = 6;
+  let columnWidths = columnWidthsData.map((widths, i) => {
+    if (columnOverrides[i] !== undefined) {
+      return Math.max(columnOverrides[i]!, MIN_COLUMN_WIDTH);
+    }
+    if (widths.length === 0) {
+      return Math.max(headers[i]?.length || 0, MIN_COLUMN_WIDTH);
+    }
+    const sorted = [...widths].sort((a, b) => a - b);
+    const p90 = percentile(sorted, 0.9);
+    return Math.max(p90, MIN_COLUMN_WIDTH);
   });
 
   const maxSingleColumnWidth = Math.floor(tableWidth * MAX_COLUMN_WIDTH_FRACTION);
@@ -24,6 +57,9 @@ export function computeColumnWidths(headers: string[], rows: string[][], tableWi
 
   columnWidths = columnWidths.map((w, i) => {
     let newWidth = w + NUM_SPACES_BETWEEN_COLUMNS;
+    if (columnOverrides[i] !== undefined) {
+      return w;
+    }
     if (newWidth > maxSingleColumnWidth) {
       clippedColumns.push([i, newWidth]);
       newWidth = maxSingleColumnWidth;
@@ -71,7 +107,6 @@ export function computeRowHeights(rows: string[][], columnWidths: number[], wrap
       if (colWidth === undefined) return;
       
       const width = colWidth - NUM_SPACES_BETWEEN_COLUMNS;
-      // We pass wordWrap=true if wrapMode is 'words', else false (for 'chars')
       const wrapped = wrapText(cell || '', width, wrapMode === 'words');
       height = Math.max(height, wrapped.length);
     });
