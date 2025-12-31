@@ -1,5 +1,5 @@
-import type { State } from "../types";
-import { LEFT_PADDING } from "../utils/text";
+import type { State } from "src/types";
+import { LEFT_PADDING } from "src/utils/text";
 
 export interface HeaderOverlay {
   visible: boolean;

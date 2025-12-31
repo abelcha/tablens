@@ -1,17 +1,20 @@
 import { type KeyEvent } from "@opentui/core";
-import { Action } from "./actions";
+import { Action } from "src/app/actions";
 
 export function keyToActions(key: KeyEvent, ctx: { pageSize: number }): Action[] {
   const actions: Action[] = [];
 
   switch (key.name) {
+    case "/":
+      actions.push({ type: "ENTER_SEARCH" });
+      break;
     case "up":
     case "k":
-      actions.push({ type: "MOVE_UP" });
+      actions.push({ type: "MOVE_UP", pageSize: ctx.pageSize });
       break;
     case "down":
     case "j":
-      actions.push({ type: "MOVE_DOWN" });
+      actions.push({ type: "MOVE_DOWN", pageSize: ctx.pageSize });
       break;
     case "left":
     case "h":

@@ -1,14 +1,14 @@
 import type { StyledText } from "@opentui/core";
-import type { State, WrapMode, SelectionMode } from "../types";
-import { computeColumnWidths, computeRowHeights } from "../layout/calculator";
+import type { State, WrapMode, SelectionMode } from "src/types";
+import { computeColumnWidths, computeRowHeights } from "src/layout/calculator";
 import {
   buildHeaderLine,
   buildSeparatorLine,
   buildBottomSeparatorLine,
   buildRowLine,
-} from "../utils/text";
-import { parseInlineMarkup } from "./markup";
-export { computeHeaderOverlay } from "./headerOverlay";
+} from "src/utils/text";
+import { parseInlineMarkup } from "src/app/markup";
+export { computeHeaderOverlay } from "src/app/headerOverlay";
 
 export interface TableContentModel {
   content: StyledText;
@@ -21,6 +21,7 @@ export interface TableContentModel {
 export function computeTableContentModel(args: {
   headers: string[];
   visibleRows: string[][];
+  visibleMatches?: boolean[][];
   rowsOffset: number;
   colsOffset: number;
   wrapMode: WrapMode;
@@ -34,6 +35,7 @@ export function computeTableContentModel(args: {
   const {
     headers,
     visibleRows,
+    visibleMatches,
     rowsOffset,
     colsOffset,
     wrapMode,
@@ -88,6 +90,9 @@ export function computeTableContentModel(args: {
   }
 
   const visRows = visibleRows.slice(0, visCount).map((r) => r.slice(colsOffset));
+  const visMatches = visibleMatches
+    ? visibleMatches.slice(0, visCount).map((m) => m.slice(colsOffset))
+    : undefined;
   const visHeights = rowHeights.slice(0, visCount);
 
   // Determine selected column index relative to displayed columns
@@ -107,7 +112,7 @@ export function computeTableContentModel(args: {
         .map((r, i) => {
           const rowNum = rowsOffset + i + 1;
           return Array.from({ length: visHeights[i] || 1 }, (_, h) =>
-            buildRowLine(r, colWidths, wrapMode, h, rowNum, gutterWidth),
+            buildRowLine(r, colWidths, wrapMode, h, rowNum, gutterWidth, visMatches?.[i]),
           ).join("");
         })
         .join("") +

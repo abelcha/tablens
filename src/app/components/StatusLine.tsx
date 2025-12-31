@@ -1,5 +1,6 @@
 /** @jsxImportSource @opentui/react */
 import React from "react";
+import { parseInlineMarkup } from "src/app/markup";
 
 export function StatusLine({
   file,
@@ -7,18 +8,45 @@ export function StatusLine({
   totalRowCount,
   cursorCol,
   numCols,
-  counter,
-  gutterWidth,
+  searchQuery = "",
+  searchUseRegex = false,
+  searchWholeWord = false,
+  searchCaseSensitive = false,
+  searchMatchRowCount = null,
+  searchError = null,
+  isMaterialized = false,
 }: {
   file: string;
   cursorRow: number;
   totalRowCount: number;
   cursorCol: number;
   numCols: number;
-  counter: number;
-  gutterWidth: number;
+  searchQuery?: string;
+  searchUseRegex?: boolean;
+  searchWholeWord?: boolean;
+  searchCaseSensitive?: boolean;
+  searchMatchRowCount?: number | null;
+  searchError?: string | null;
+  isMaterialized?: boolean;
 }) {
+  const ramIndicator = isMaterialized ? "{green} ● RAM {/green}" : "{yellow} ○ initializing ... {/yellow}";
+
   // csvlens format: medium.csv [Row 1/10000, Col 1/20]
-  const content = `${file} [Row ${cursorRow + 1}/${totalRowCount}, Col ${cursorCol + 1}/${numCols}]`;
-  return <text content={content} left={0} />;
+  const filterLabel =
+    searchQuery.length > 0
+      ? ` | Filter: /${searchQuery}/` +
+      (searchUseRegex ? " (.*)" : "") +
+      (searchWholeWord ? " (W)" : "") +
+      (searchCaseSensitive ? " (Aa)" : "") +
+      (searchMatchRowCount !== null ? ` [${searchMatchRowCount} rows]` : "")
+      : "";
+  const errorLabel = searchError ? ` | Error: ${searchError}` : "";
+  const content = `${file} [Row ${cursorRow + 1}/${totalRowCount}, Col ${cursorCol + 1}/${numCols}]${filterLabel}${errorLabel}`;
+  
+  return (
+    <box flexDirection="row" width="100%" height={1}>
+      <text content={parseInlineMarkup(content)} left={0} style={{ flexGrow: 1 }} />
+      <text content={parseInlineMarkup(ramIndicator)} />
+    </box>
+  );
 }

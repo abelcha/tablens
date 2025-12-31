@@ -1,11 +1,12 @@
-import { State } from "../types";
-import { DuckDBDataSource } from "../data/source";
-import { computeColumnWidths, computeRowHeights } from "../layout/calculator";
+import type { State } from "src/types";
+import { DuckDBDataSource } from "src/data/source";
+import { computeColumnWidths, computeRowHeights } from "src/layout/calculator";
 
 export interface ViewportPatch {
   rowsOffset: number;
   colsOffset: number;
   visibleRows: string[][];
+  visibleMatches: boolean[][];
 }
 
 export async function computeViewportPatch(args: {
@@ -14,10 +15,24 @@ export async function computeViewportPatch(args: {
   termH: number;
   source: DuckDBDataSource;
   lastRenderedOffset: number;
+  lastRenderedQuery: string;
+  lastRenderedUseRegex: boolean;
+  lastRenderedWholeWord: boolean;
+  lastRenderedCaseSensitive: boolean;
 }): Promise<ViewportPatch> {
-  const { state, termW, termH, source, lastRenderedOffset } = args;
+  const {
+    state,
+    termW,
+    termH,
+    source,
+    lastRenderedOffset,
+    lastRenderedQuery,
+    lastRenderedUseRegex,
+    lastRenderedWholeWord,
+    lastRenderedCaseSensitive,
+  } = args;
   const { headers, selectionMode, cursorRow, cursorCol, wrapMode, columnOverrides } = state;
-  let { rowsOffset, colsOffset, visibleRows } = state;
+  let { rowsOffset, colsOffset, visibleRows, visibleMatches } = state;
 
   // Fetch more rows to support larger sample window for column width calculation
   // This prevents columns from disappearing/reappearing with sparse data
@@ -28,12 +43,32 @@ export async function computeViewportPatch(args: {
     rowsOffset = cursorRow;
   }
 
-  // 2. Fetch if offset changed or rows empty
-  if (rowsOffset !== lastRenderedOffset || visibleRows.length === 0) {
-    try {
+  // 2. Fetch if offset changed, query changed, or rows empty
+  const queryChanged =
+    state.searchQuery !== lastRenderedQuery ||
+    state.searchUseRegex !== lastRenderedUseRegex ||
+    state.searchWholeWord !== lastRenderedWholeWord ||
+    state.searchCaseSensitive !== lastRenderedCaseSensitive;
+
+  if (queryChanged) {
+    rowsOffset = 0;
+  }
+
+  if (rowsOffset !== lastRenderedOffset || visibleRows.length === 0 || queryChanged) {
+    if (state.searchQuery.length > 0) {
+      const res = await source.getMatchingRowsWithMatches({
+        offset: rowsOffset,
+        limit: fetchLimit,
+        query: state.searchQuery,
+        useRegex: state.searchUseRegex,
+        wholeWord: state.searchWholeWord,
+        caseSensitive: state.searchCaseSensitive,
+      });
+      visibleRows = res.rows;
+      visibleMatches = res.matches;
+    } else {
       visibleRows = await source.getRows(rowsOffset, fetchLimit);
-    } catch (e) {
-      console.error("Error fetching rows:", e);
+      visibleMatches = visibleRows.map((r) => r.map(() => false));
     }
   }
 
@@ -104,12 +139,22 @@ export async function computeViewportPatch(args: {
     const diff = relativeCursor - visCount + 1;
     rowsOffset += diff;
     // Re-fetch rows after auto-scroll
-    try {
+    if (state.searchQuery.length > 0) {
+      const res = await source.getMatchingRowsWithMatches({
+        offset: rowsOffset,
+        limit: fetchLimit,
+        query: state.searchQuery,
+        useRegex: state.searchUseRegex,
+        wholeWord: state.searchWholeWord,
+        caseSensitive: state.searchCaseSensitive,
+      });
+      visibleRows = res.rows;
+      visibleMatches = res.matches;
+    } else {
       visibleRows = await source.getRows(rowsOffset, fetchLimit);
-    } catch (e) {
-      console.error("Error fetching rows:", e);
+      visibleMatches = visibleRows.map((r) => r.map(() => false));
     }
   }
 
-  return { rowsOffset, colsOffset, visibleRows };
+  return { rowsOffset, colsOffset, visibleRows, visibleMatches };
 }

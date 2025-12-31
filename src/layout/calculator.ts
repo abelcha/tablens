@@ -1,5 +1,5 @@
-import type { WrapMode } from "../types";
-import { wrapText, NUM_SPACES_BETWEEN_COLUMNS } from "../utils/text";
+import type { WrapMode } from "src/types";
+import { wrapText, NUM_SPACES_BETWEEN_COLUMNS } from "src/utils/text";
 
 export const MAX_COLUMN_WIDTH_FRACTION = 0.3;
 

@@ -64,7 +64,7 @@ async function main() {
 
   const source = new DuckDBDataSource();
   try {
-    await source.connect(file);
+    await source.connect({ filePath: file });
     state.headers = source.getHeaders();
     state.totalRowCount = source.getTotalRows();
   } catch (err) {

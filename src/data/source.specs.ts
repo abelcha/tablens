@@ -23,7 +23,7 @@ describe("DuckDBDataSource", () => {
 
   it("should connect and get metadata", async () => {
     const source = new DuckDBDataSource();
-    await source.connect(TEST_CSV);
+    await source.connect({ filePath: TEST_CSV });
 
     expect(source.getHeaders()).toEqual(["ID", "Name"]);
     expect(source.getTotalRows()).toBe(10);
@@ -33,7 +33,7 @@ describe("DuckDBDataSource", () => {
 
   it("should lazy load rows with limit offset", async () => {
     const source = new DuckDBDataSource();
-    await source.connect(TEST_CSV);
+    await source.connect({ filePath: TEST_CSV });
 
     // Fetch rows 5-7 (3 rows)
     const rows = await source.getRows(5, 3);
@@ -49,7 +49,7 @@ describe("DuckDBDataSource", () => {
 
   it("should handle out of bounds gracefully", async () => {
     const source = new DuckDBDataSource();
-    await source.connect(TEST_CSV);
+    await source.connect({ filePath: TEST_CSV });
 
     // Offset 9, limit 5. Should return 1 row (ID 9).
     const rows = await source.getRows(9, 5);

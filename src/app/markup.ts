@@ -9,14 +9,24 @@ export function parseInlineMarkup(text: string): StyledText {
   const themeColors: Record<string, string> = {
     yellow: "#EBC06D",
     orange: "#EBC06D",
-    cyan: "#00ffff",
-    green: "#00ff00",
+    cyan: "#00AAAA",
+    magenta: "#AA00AA",
+    green: "#00AA00",
     white: "#ffffff",
     gray: "#888888",
+    grey: "#888888",
     dim: "#666666",
     red: "#ff0000",
     blue: "#839496", // RGB(131, 148, 150) - csvlens row number color
     lightgray: "#c0c0c0", // RGB(192, 192, 192) - csvlens data text color
+    // Explicitly vibrant versions for indicators
+    brightCyan: "#00ffff",
+    brightYellow: "#ffff00",
+    brightMagenta: "#ff00ff",
+    brightGreen: "#00ff00",
+    mutedCyan: "#008888",
+    mutedYellow: "#888800",
+    mutedMagenta: "#880088",
   };
 
   while (remaining.length > 0) {

@@ -1,4 +1,4 @@
-import type { WrapMode } from "../types";
+import type { WrapMode } from "src/types";
 
 export const LEFT_PADDING = 1;
 export const RIGHT_PADDING = 1;
@@ -110,6 +110,7 @@ export function buildRowLine(
   lineIdx = 0,
   rowNumber?: number,
   gutterWidth: number = 0,
+  matches?: boolean[],
 ) {
   let line = "";
 
@@ -139,7 +140,12 @@ export function buildRowLine(
 
     const leftPad = " ".repeat(LEFT_PADDING);
     const rightPad = " ".repeat(Math.max(0, width - text.length - LEFT_PADDING));
-    line += leftPad + `{lightgray}${text}{/lightgray}` + rightPad;
+    const isMatch = Boolean(matches?.[colIdx]);
+    if (isMatch) {
+      line += leftPad + `{yellow}{underline}${text}{/underline}{/yellow}` + rightPad;
+    } else {
+      line += leftPad + `{lightgray}${text}{/lightgray}` + rightPad;
+    }
   });
   return line + "\n";
 }

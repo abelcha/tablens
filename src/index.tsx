@@ -1,14 +1,16 @@
 /** @jsxImportSource @opentui/react */
-import React, { useState, useEffect, useMemo, useRef, useReducer } from "react";
-import { createCliRenderer, ConsolePosition, type KeyEvent } from "@opentui/core";
-import { createRoot, useRenderer, useKeyboard } from "@opentui/react";
-import { DuckDBDataSource } from "./data/source";
-import { initialState, reducer } from "./app/state";
-import { keyToActions } from "./app/keyboard";
-import { computeViewportPatch } from "./app/viewport";
-import { computeTableContentModel, computeCursorOverlay, computeHeaderOverlay } from "./app/render";
-import { StatusLine } from "./app/components/StatusLine";
-import { parseInlineMarkup } from "./app/markup";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { type KeyEvent } from "@opentui/core";
+import { useKeyboard, useRenderer } from "@opentui/react";
+import { DuckDBDataSource } from "src/data/source";
+import { keyToActions } from "src/app/keyboard";
+import { computeCursorOverlay, computeHeaderOverlay, computeTableContentModel } from "src/app/render";
+import { initialState, reducer } from "src/app/state";
+import { computeViewportPatch } from "src/app/viewport";
+import { SearchBar } from "src/app/components/SearchBar";
+import { StatusLine } from "src/app/components/StatusLine";
+import { EmptyState } from "src/app/components/EmptyState";
+import { parseInlineMarkup } from "src/app/markup";
 
 declare module "@opentui/react" {
   namespace JSX {
@@ -24,41 +26,42 @@ declare module "@opentui/react" {
   }
 }
 
-function TablensApp({ file, source }: { file: string; source: DuckDBDataSource }) {
+export function TablensApp({ file, query, source }: { file: string; query?: string; source: DuckDBDataSource }) {
   const renderer = useRenderer();
   const [state, dispatch] = useReducer(reducer, initialState());
   const [terminalBgColor, setTerminalBgColor] = useState<string>("#1e1e1e");
 
-  // Detect terminal background color
   useEffect(() => {
     renderer
       .getPalette()
       .then((colors) => {
-        if (colors.defaultBackground) {
-          setTerminalBgColor(colors.defaultBackground);
-        }
+        if (colors.defaultBackground) setTerminalBgColor(colors.defaultBackground);
       })
       .catch(() => {
-        // Fallback if detection fails
+        // ignore
       });
   }, [renderer]);
 
   const lastRenderedOffset = useRef(-1);
-  const lastRequestId = useRef(0);
+  const lastRenderedQuery = useRef("");
+  const lastRenderedUseRegex = useRef(false);
+  const lastRenderedWholeWord = useRef(false);
+  const lastRenderedCaseSensitive = useRef(false);
+  const lastViewportRequestId = useRef(0);
+  const currentSearchQueryRef = useRef("");
 
-  // Initial data load
   useEffect(() => {
     async function init() {
       try {
-        await source.connect(file);
+        await source.connect({ filePath: file, query });
         dispatch({ type: "SET_HEADERS", headers: source.getHeaders() });
         dispatch({ type: "SET_TOTAL_ROW_COUNT", count: source.getTotalRows() });
       } catch (err) {
-        console.error("Failed to connect to file:", err);
+        console.error("Failed to connect to source:", err);
       }
     }
     init();
-  }, [file, source]);
+  }, [file, query, source]);
 
   const {
     headers,
@@ -70,31 +73,122 @@ function TablensApp({ file, source }: { file: string; source: DuckDBDataSource }
     selectionMode,
     wrapMode,
     visibleRows,
+    visibleMatches,
     columnOverrides,
+    searchActive,
+    searchQuery,
+    searchUseRegex,
+    searchWholeWord,
+    searchCaseSensitive,
+    searchMatchRowCount,
+    isMaterialized,
   } = state;
 
-  // Viewport and data fetch effect
+  // Poll for materialization status until complete
+  useEffect(() => {
+    if (isMaterialized) return;
+    
+    const interval = setInterval(() => {
+      const materialized = source.getIsMaterialized();
+      if (materialized) {
+        dispatch({ type: "SET_MATERIALIZED", isMaterialized: true });
+        clearInterval(interval);
+      }
+    }, 500);
+    
+    return () => clearInterval(interval);
+  }, [source, isMaterialized]);
+
+  const [appliedSearchQuery, setAppliedSearchQuery] = useState(searchQuery);
+  const [searchLoading, setSearchLoading] = useState(false);
+
+  const lastAppliedParams = useRef({
+    query: "",
+    useRegex: false,
+    wholeWord: false,
+    caseSensitive: false,
+  });
+
+  // Keep ref in sync with current searchQuery
+  useEffect(() => {
+    currentSearchQueryRef.current = searchQuery;
+    // If query is cleared, clear applied search too
+    if (searchQuery === "" && appliedSearchQuery !== "") {
+      setAppliedSearchQuery("");
+      dispatch({ type: "SET_SEARCH_MATCH_ROW_COUNT", count: null });
+      lastAppliedParams.current = { query: "", useRegex: false, wholeWord: false, caseSensitive: false };
+    }
+  }, [searchQuery, appliedSearchQuery]);
+
+  const performSearch = useCallback(
+    (query: string, useRegex: boolean, wholeWord: boolean, caseSensitive: boolean) => {
+      // Avoid redundant searches
+      if (
+        query === lastAppliedParams.current.query &&
+        useRegex === lastAppliedParams.current.useRegex &&
+        wholeWord === lastAppliedParams.current.wholeWord &&
+        caseSensitive === lastAppliedParams.current.caseSensitive
+      ) {
+        return;
+      }
+
+      lastAppliedParams.current = { query, useRegex, wholeWord, caseSensitive };
+      setSearchLoading(true);
+      source
+        .applySearch({
+          query,
+          useRegex,
+          wholeWord,
+          caseSensitive,
+        })
+        .then((count) => {
+          setAppliedSearchQuery(query);
+          dispatch({ type: "SET_SEARCH_MATCH_ROW_COUNT", count });
+        })
+        .catch((err) => {
+          console.error("Search failed:", err);
+          dispatch({ type: "SET_SEARCH_MATCH_ROW_COUNT", count: 0 });
+        })
+        .finally(() => {
+          setSearchLoading(false);
+        });
+    },
+    [source],
+  );
+
   useEffect(() => {
     if (headers.length === 0 || totalRowCount === 0) return;
 
     const tableH =
       renderer.terminalHeight - 1 - (renderer.console.visible ? renderer.console.bounds.height : 0);
     const tableW = renderer.terminalWidth;
-    const requestId = ++lastRequestId.current;
+    const requestId = ++lastViewportRequestId.current;
 
     computeViewportPatch({
-      state,
+      state: { ...state, searchQuery: appliedSearchQuery },
       termW: tableW,
       termH: tableH,
       source,
       lastRenderedOffset: lastRenderedOffset.current,
+      lastRenderedQuery: lastRenderedQuery.current,
+      lastRenderedUseRegex: lastRenderedUseRegex.current,
+      lastRenderedWholeWord: lastRenderedWholeWord.current,
+      lastRenderedCaseSensitive: lastRenderedCaseSensitive.current,
     }).then((patch) => {
+      // Only update if this is the latest request to avoid race conditions
+      if (requestId < lastViewportRequestId.current) return;
+
       if (
         patch.rowsOffset !== state.rowsOffset ||
         patch.colsOffset !== state.colsOffset ||
-        patch.visibleRows !== state.visibleRows
+        patch.visibleRows !== state.visibleRows ||
+        patch.visibleMatches !== state.visibleMatches
       ) {
         lastRenderedOffset.current = patch.rowsOffset;
+        lastRenderedQuery.current = appliedSearchQuery;
+        lastRenderedUseRegex.current = searchUseRegex;
+        lastRenderedWholeWord.current = searchWholeWord;
+        lastRenderedCaseSensitive.current = searchCaseSensitive;
         dispatch({ type: "APPLY_VIEWPORT_PATCH", patch, requestId });
       }
     });
@@ -104,14 +198,42 @@ function TablensApp({ file, source }: { file: string; source: DuckDBDataSource }
     renderer.console.visible,
     headers,
     totalRowCount,
+    rowsOffset,
+    colsOffset,
     cursorRow,
     cursorCol,
     selectionMode,
     wrapMode,
     columnOverrides,
+    searchActive,
+    appliedSearchQuery,
+    searchUseRegex,
+    searchWholeWord,
+    searchCaseSensitive,
+    searchMatchRowCount,
+    source,
   ]);
 
-  // Derived values for rendering
+  // Refresh search when flags change (if there's a search query)
+  useEffect(() => {
+    // If the box has content, we want to refresh search with new flags
+    // Even if it hasn't been "applied" yet (e.g. while typing)
+    const queryToUse = currentSearchQueryRef.current.length > 0 ? currentSearchQueryRef.current : appliedSearchQuery;
+    if (queryToUse.length === 0) return;
+
+    performSearch(queryToUse, state.searchUseRegex, state.searchWholeWord, state.searchCaseSensitive);
+    // We only want to trigger this when flags change or appliedSearchQuery changes.
+    // We use a ref for the current searchQuery to avoid triggering while typing.
+  }, [
+    state.searchUseRegex,
+    state.searchWholeWord,
+    state.searchCaseSensitive,
+    appliedSearchQuery,
+    performSearch,
+  ]);
+
+
+
   const tableContent = useMemo(() => {
     if (headers.length === 0 || totalRowCount === 0 || visibleRows.length === 0) return null;
 
@@ -122,6 +244,7 @@ function TablensApp({ file, source }: { file: string; source: DuckDBDataSource }
     return computeTableContentModel({
       headers,
       visibleRows,
+      visibleMatches,
       rowsOffset,
       colsOffset,
       wrapMode,
@@ -136,6 +259,7 @@ function TablensApp({ file, source }: { file: string; source: DuckDBDataSource }
     headers,
     totalRowCount,
     visibleRows,
+    visibleMatches,
     colsOffset,
     rowsOffset,
     wrapMode,
@@ -180,29 +304,60 @@ function TablensApp({ file, source }: { file: string; source: DuckDBDataSource }
       renderer.destroy();
       process.exit(0);
     }
-    if (key.name === "q") {
-      renderer.destroy();
-      process.exit(0);
-    }
 
     if (key.ctrl && key.name === "`") {
       renderer.console.toggle();
       return;
     }
-
     if (key.name === "`") {
       renderer.console.toggle();
       return;
     }
+    if (renderer.console.visible) return;
 
-    if (renderer.console.visible) {
+    if (key.option && key.name === "r") {
+      dispatch({ type: "TOGGLE_SEARCH_REGEX" });
+      return;
+    }
+    if (key.option && key.name === "w") {
+      dispatch({ type: "TOGGLE_SEARCH_WHOLE_WORD" });
+      return;
+    }
+    if (key.option && key.name === "c") {
+      dispatch({ type: "TOGGLE_SEARCH_CASE_SENSITIVE" });
+      return;
+    }
+
+    if (state.searchActive) {
+      if (key.name === "escape") {
+        dispatch({ type: "EXIT_SEARCH" });
+        return;
+      }
+      return;
+    }
+
+    if (key.name === "y") {
+      dispatch({
+        type: "YANK",
+        selectionMode: state.selectionMode,
+        cursorRow: state.cursorRow,
+        cursorCol: state.cursorCol,
+        visibleRows: state.visibleRows,
+        headers: state.headers,
+        rowsOffset: state.rowsOffset,
+      });
+      return;
+    }
+
+    if (key.name === "x") {
+      // Toggle auto-resize: if columns are resized, reset to default; otherwise auto-resize
+      dispatch({ type: "AUTO_RESIZE_COLUMNS", headers: state.headers, visibleRows: state.visibleRows });
       return;
     }
 
     const pageSize = renderer.terminalHeight - 4;
     const actions = keyToActions(key, { pageSize });
     actions.forEach((action) => {
-      // If resizing a column, pass the current computed width
       if (action.type === "RESIZE_COLUMN" && tableContent && state.selectionMode === "column") {
         const colIdx = state.cursorCol - state.colsOffset;
         if (colIdx >= 0 && colIdx < tableContent.colWidths.length) {
@@ -212,6 +367,11 @@ function TablensApp({ file, source }: { file: string; source: DuckDBDataSource }
       }
       dispatch(action);
     });
+
+    if (key.name === "q") {
+      renderer.destroy();
+      process.exit(0);
+    }
   });
 
   return (
@@ -222,19 +382,36 @@ function TablensApp({ file, source }: { file: string; source: DuckDBDataSource }
         left={0}
         width="100%"
         height={
-          renderer.terminalHeight -
-          1 -
-          (renderer.console.visible ? renderer.console.bounds.height : 0)
+          renderer.terminalHeight - 1 - (renderer.console.visible ? renderer.console.bounds.height : 0)
         }
       >
-        <text
-          id="table-text"
-          content={tableContent?.content || "Loading..."}
-          top={0}
-          left={0}
-          zIndex={1}
-          wrapMode="none"
-        />
+        {tableContent ? (
+          <text
+            id="table-text"
+            content={tableContent.content}
+            top={0}
+            left={0}
+            zIndex={1}
+            wrapMode="none"
+          />
+        ) : (
+          <EmptyState
+            type={(() => {
+              if (headers.length === 0) return "loading";
+
+              if (appliedSearchQuery.length > 0) {
+                if (visibleRows.length === 0) return "no-results";
+                if (searchMatchRowCount === 0) return "no-results";
+                if (searchMatchRowCount === null) return "loading";
+              }
+
+              if (totalRowCount === 0) return "empty-file";
+
+              return "loading";
+            })()}
+            query={appliedSearchQuery}
+          />
+        )}
         <box
           id="cursor-overlay"
           {...cursorStyle}
@@ -270,46 +447,47 @@ function TablensApp({ file, source }: { file: string; source: DuckDBDataSource }
         width="100%"
         height={1}
       >
-        <StatusLine
-          file={file}
-          cursorRow={cursorRow}
-          totalRowCount={totalRowCount}
-          cursorCol={cursorCol}
-          numCols={headers.length}
-          counter={state.counter}
-          gutterWidth={String(totalRowCount).length + 2}
-        />
+        {state.searchActive ||
+          searchQuery.length > 0 ||
+          searchUseRegex ||
+          searchWholeWord ||
+          searchCaseSensitive ? (
+          <SearchBar
+            query={searchQuery}
+            onInput={(value) => dispatch({ type: "SET_SEARCH_QUERY", query: value })}
+            onSubmit={(value) => {
+              performSearch(value, searchUseRegex, searchWholeWord, searchCaseSensitive);
+              dispatch({ type: "EXIT_SEARCH" });
+            }}
+            useRegex={searchUseRegex}
+            wholeWord={searchWholeWord}
+            caseSensitive={searchCaseSensitive}
+            matchRowCount={searchMatchRowCount}
+            active={searchActive}
+            cursorRow={cursorRow}
+            totalRowCount={totalRowCount}
+            cursorCol={cursorCol}
+            numCols={headers.length}
+            loading={searchLoading}
+            isMaterialized={isMaterialized}
+          />
+        ) : (
+          <StatusLine
+            file={file}
+            cursorRow={cursorRow}
+            totalRowCount={totalRowCount}
+            cursorCol={cursorCol}
+            numCols={headers.length}
+            searchQuery={searchQuery}
+            searchUseRegex={searchUseRegex}
+            searchWholeWord={searchWholeWord}
+            searchCaseSensitive={searchCaseSensitive}
+            searchMatchRowCount={searchMatchRowCount}
+            searchError={state.searchError}
+            isMaterialized={isMaterialized}
+          />
+        )}
       </box>
     </>
   );
 }
-
-async function main() {
-  const file = process.argv[2] || "data.csv";
-  const source = new DuckDBDataSource();
-
-  const renderer = await createCliRenderer({
-    exitOnCtrlC: true,
-    targetFps: 40,
-    useConsole: true,
-    consoleOptions: {
-      position: ConsolePosition.BOTTOM,
-      sizePercent: 30,
-      colorInfo: "#00FFFF",
-      colorWarn: "#FFFF00",
-      colorError: "#FF0000",
-      startInDebugMode: false,
-    },
-  });
-
-  console.log("This appears in the overlay");
-  console.error("Errors are color-coded red");
-  console.warn("Warnings appear in yellow");
-
-  createRoot(renderer).render(<TablensApp file={file} source={source} />);
-}
-
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
