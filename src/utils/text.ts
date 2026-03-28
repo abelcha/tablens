@@ -91,15 +91,39 @@ export function buildHeaderLine(
   return line + "\n";
 }
 
-export function buildSeparatorLine(widths: number[], gutterWidth: number = 0) {
+export function buildSeparatorLine(widths: number[], gutterWidth: number = 0, maxWidth?: number) {
+  if (widths.length === 0) {
+    const gutter = gutterWidth > 0 ? "─".repeat(gutterWidth) + "┬" : "";
+    return `{blue}${gutter}{/blue}\n`;
+  }
   const gutter = gutterWidth > 0 ? "─".repeat(gutterWidth) + "┬" : "";
-  const line = gutter + widths.map((w) => "─".repeat(w)).join("");
+  const totalWidth = widths.reduce((sum, w) => sum + w, 0);
+  // Constrain to maxWidth if provided to prevent exceeding terminal width
+  const constrainedWidth =
+    maxWidth !== undefined
+      ? Math.max(0, Math.min(totalWidth, maxWidth - gutter.length))
+      : totalWidth;
+  const line = gutter + "─".repeat(Math.max(0, constrainedWidth));
   return `{blue}${line}{/blue}\n`;
 }
 
-export function buildBottomSeparatorLine(widths: number[], gutterWidth: number = 0) {
+export function buildBottomSeparatorLine(
+  widths: number[],
+  gutterWidth: number = 0,
+  maxWidth?: number,
+) {
+  if (widths.length === 0) {
+    const gutter = gutterWidth > 0 ? "─".repeat(gutterWidth) + "┴" : "";
+    return `{blue}${gutter}{/blue}\n`;
+  }
   const gutter = gutterWidth > 0 ? "─".repeat(gutterWidth) + "┴" : "";
-  const line = gutter + widths.map((w) => "─".repeat(w)).join("");
+  const totalWidth = widths.reduce((sum, w) => sum + w, 0);
+  // Constrain to maxWidth if provided to prevent exceeding terminal width
+  const constrainedWidth =
+    maxWidth !== undefined
+      ? Math.max(0, Math.min(totalWidth, maxWidth - gutter.length))
+      : totalWidth;
+  const line = gutter + "─".repeat(Math.max(0, constrainedWidth));
   return `{blue}${line}{/blue}\n`;
 }
 

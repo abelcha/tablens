@@ -1,10 +1,21 @@
 /** @jsxImportSource @opentui/react */
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import { type KeyEvent } from "@opentui/core";
 import { useKeyboard, useRenderer } from "@opentui/react";
 import { DuckDBDataSource } from "src/data/source";
 import { keyToActions } from "src/app/keyboard";
-import { computeCursorOverlay, computeHeaderOverlay, computeTableContentModel } from "src/app/render";
+import {
+  computeCursorOverlay,
+  computeHeaderOverlay,
+  computeTableContentModel,
+} from "src/app/render";
 import { initialState, reducer } from "src/app/state";
 import { computeViewportPatch } from "src/app/viewport";
 import { SearchBar } from "src/app/components/SearchBar";
@@ -26,7 +37,15 @@ declare module "@opentui/react" {
   }
 }
 
-export function TablensApp({ file, query, source }: { file: string; query?: string; source: DuckDBDataSource }) {
+export function TablensApp({
+  file,
+  query,
+  source,
+}: {
+  file: string;
+  query?: string;
+  source: DuckDBDataSource;
+}) {
   const renderer = useRenderer();
   const [state, dispatch] = useReducer(reducer, initialState());
   const [terminalBgColor, setTerminalBgColor] = useState<string>("#1e1e1e");
@@ -35,7 +54,8 @@ export function TablensApp({ file, query, source }: { file: string; query?: stri
     renderer
       .getPalette()
       .then((colors) => {
-        if (colors.defaultBackground) setTerminalBgColor(colors.defaultBackground);
+        if (colors.defaultBackground)
+          setTerminalBgColor(colors.defaultBackground);
       })
       .catch(() => {
         // ignore
@@ -47,6 +67,10 @@ export function TablensApp({ file, query, source }: { file: string; query?: stri
   const lastRenderedUseRegex = useRef(false);
   const lastRenderedWholeWord = useRef(false);
   const lastRenderedCaseSensitive = useRef(false);
+  const lastRenderedSorter = useRef<{
+    column: number;
+    direction: "asc" | "desc";
+  } | null>(null);
   const lastViewportRequestId = useRef(0);
   const currentSearchQueryRef = useRef("");
 
@@ -82,12 +106,13 @@ export function TablensApp({ file, query, source }: { file: string; query?: stri
     searchCaseSensitive,
     searchMatchRowCount,
     isMaterialized,
+    sorter,
   } = state;
 
   // Poll for materialization status until complete
   useEffect(() => {
     if (isMaterialized) return;
-    
+
     const interval = setInterval(() => {
       const materialized = source.getIsMaterialized();
       if (materialized) {
@@ -95,12 +120,13 @@ export function TablensApp({ file, query, source }: { file: string; query?: stri
         clearInterval(interval);
       }
     }, 500);
-    
+
     return () => clearInterval(interval);
   }, [source, isMaterialized]);
 
   const [appliedSearchQuery, setAppliedSearchQuery] = useState(searchQuery);
   const [searchLoading, setSearchLoading] = useState(false);
+  const [sorting, setSorting] = useState(false);
 
   const lastAppliedParams = useRef({
     query: "",
@@ -116,12 +142,22 @@ export function TablensApp({ file, query, source }: { file: string; query?: stri
     if (searchQuery === "" && appliedSearchQuery !== "") {
       setAppliedSearchQuery("");
       dispatch({ type: "SET_SEARCH_MATCH_ROW_COUNT", count: null });
-      lastAppliedParams.current = { query: "", useRegex: false, wholeWord: false, caseSensitive: false };
+      lastAppliedParams.current = {
+        query: "",
+        useRegex: false,
+        wholeWord: false,
+        caseSensitive: false,
+      };
     }
   }, [searchQuery, appliedSearchQuery]);
 
   const performSearch = useCallback(
-    (query: string, useRegex: boolean, wholeWord: boolean, caseSensitive: boolean) => {
+    (
+      query: string,
+      useRegex: boolean,
+      wholeWord: boolean,
+      caseSensitive: boolean,
+    ) => {
       // Avoid redundant searches
       if (
         query === lastAppliedParams.current.query &&
@@ -156,11 +192,56 @@ export function TablensApp({ file, query, source }: { file: string; query?: stri
     [source],
   );
 
+  // Handle sorting
+  useEffect(() => {
+    if (!sorter) return;
+
+    const colName = headers[sorter.column];
+    if (!colName) return;
+
+    setSorting(true);
+    source
+      .applySort({
+        column: colName,
+        direction: sorter.direction,
+      })
+      .then(() => {
+        // Refresh viewport/search
+        dispatch({ type: "SET_TOTAL_ROW_COUNT", count: source.getTotalRows() });
+        if (appliedSearchQuery.length > 0) {
+          performSearch(
+            appliedSearchQuery,
+            searchUseRegex,
+            searchWholeWord,
+            searchCaseSensitive,
+          );
+        }
+      })
+      .catch((err) => {
+        console.error("Sort failed:", err);
+      })
+      .finally(() => {
+        setSorting(false);
+      });
+  }, [
+    sorter,
+    source,
+    headers,
+    appliedSearchQuery,
+    searchUseRegex,
+    searchWholeWord,
+    searchCaseSensitive,
+    performSearch,
+  ]);
+
   useEffect(() => {
     if (headers.length === 0 || totalRowCount === 0) return;
 
-    const tableH =
-      renderer.terminalHeight - 1 - (renderer.console.visible ? renderer.console.bounds.height : 0);
+    const consoleHeight =
+      renderer.console.visible && renderer.console.bounds?.height
+        ? Number(renderer.console.bounds.height) || 0
+        : 0;
+    const tableH = Math.max(1, renderer.terminalHeight - 1 - consoleHeight);
     const tableW = renderer.terminalWidth;
     const requestId = ++lastViewportRequestId.current;
 
@@ -174,6 +255,7 @@ export function TablensApp({ file, query, source }: { file: string; query?: stri
       lastRenderedUseRegex: lastRenderedUseRegex.current,
       lastRenderedWholeWord: lastRenderedWholeWord.current,
       lastRenderedCaseSensitive: lastRenderedCaseSensitive.current,
+      lastRenderedSorter: lastRenderedSorter.current,
     }).then((patch) => {
       // Only update if this is the latest request to avoid race conditions
       if (requestId < lastViewportRequestId.current) return;
@@ -182,13 +264,16 @@ export function TablensApp({ file, query, source }: { file: string; query?: stri
         patch.rowsOffset !== state.rowsOffset ||
         patch.colsOffset !== state.colsOffset ||
         patch.visibleRows !== state.visibleRows ||
-        patch.visibleMatches !== state.visibleMatches
+        patch.visibleMatches !== state.visibleMatches ||
+        JSON.stringify(state.sorter) !==
+          JSON.stringify(lastRenderedSorter.current)
       ) {
         lastRenderedOffset.current = patch.rowsOffset;
         lastRenderedQuery.current = appliedSearchQuery;
         lastRenderedUseRegex.current = searchUseRegex;
         lastRenderedWholeWord.current = searchWholeWord;
         lastRenderedCaseSensitive.current = searchCaseSensitive;
+        lastRenderedSorter.current = state.sorter;
         dispatch({ type: "APPLY_VIEWPORT_PATCH", patch, requestId });
       }
     });
@@ -212,16 +297,25 @@ export function TablensApp({ file, query, source }: { file: string; query?: stri
     searchCaseSensitive,
     searchMatchRowCount,
     source,
+    sorter,
   ]);
 
   // Refresh search when flags change (if there's a search query)
   useEffect(() => {
     // If the box has content, we want to refresh search with new flags
     // Even if it hasn't been "applied" yet (e.g. while typing)
-    const queryToUse = currentSearchQueryRef.current.length > 0 ? currentSearchQueryRef.current : appliedSearchQuery;
+    const queryToUse =
+      currentSearchQueryRef.current.length > 0
+        ? currentSearchQueryRef.current
+        : appliedSearchQuery;
     if (queryToUse.length === 0) return;
 
-    performSearch(queryToUse, state.searchUseRegex, state.searchWholeWord, state.searchCaseSensitive);
+    performSearch(
+      queryToUse,
+      state.searchUseRegex,
+      state.searchWholeWord,
+      state.searchCaseSensitive,
+    );
     // We only want to trigger this when flags change or appliedSearchQuery changes.
     // We use a ref for the current searchQuery to avoid triggering while typing.
   }, [
@@ -232,14 +326,16 @@ export function TablensApp({ file, query, source }: { file: string; query?: stri
     performSearch,
   ]);
 
-
-
   const tableContent = useMemo(() => {
-    if (headers.length === 0 || totalRowCount === 0 || visibleRows.length === 0) return null;
+    if (headers.length === 0 || totalRowCount === 0 || visibleRows.length === 0)
+      return null;
 
     const tableW = renderer.terminalWidth;
-    const tableH =
-      renderer.terminalHeight - 1 - (renderer.console.visible ? renderer.console.bounds.height : 0);
+    const consoleHeight =
+      renderer.console.visible && renderer.console.bounds?.height
+        ? Number(renderer.console.bounds.height) || 0
+        : 0;
+    const tableH = Math.max(1, renderer.terminalHeight - 1 - consoleHeight);
 
     return computeTableContentModel({
       headers,
@@ -274,8 +370,11 @@ export function TablensApp({ file, query, source }: { file: string; query?: stri
   const cursorStyle = useMemo(() => {
     if (!tableContent) return { visible: false };
 
-    const tableH =
-      renderer.terminalHeight - 1 - (renderer.console.visible ? renderer.console.bounds.height : 0);
+    const consoleHeight =
+      renderer.console.visible && renderer.console.bounds?.height
+        ? Number(renderer.console.bounds.height) || 0
+        : 0;
+    const tableH = Math.max(1, renderer.terminalHeight - 1 - consoleHeight);
 
     return computeCursorOverlay({
       state,
@@ -336,6 +435,14 @@ export function TablensApp({ file, query, source }: { file: string; query?: stri
       return;
     }
 
+    if (state.renameActive) {
+      if (key.name === "escape") {
+        dispatch({ type: "EXIT_RENAME_COLUMN" });
+        return;
+      }
+      return;
+    }
+
     if (key.name === "y") {
       dispatch({
         type: "YANK",
@@ -351,14 +458,22 @@ export function TablensApp({ file, query, source }: { file: string; query?: stri
 
     if (key.name === "x") {
       // Toggle auto-resize: if columns are resized, reset to default; otherwise auto-resize
-      dispatch({ type: "AUTO_RESIZE_COLUMNS", headers: state.headers, visibleRows: state.visibleRows });
+      dispatch({
+        type: "AUTO_RESIZE_COLUMNS",
+        headers: state.headers,
+        visibleRows: state.visibleRows,
+      });
       return;
     }
 
     const pageSize = renderer.terminalHeight - 4;
     const actions = keyToActions(key, { pageSize });
     actions.forEach((action) => {
-      if (action.type === "RESIZE_COLUMN" && tableContent && state.selectionMode === "column") {
+      if (
+        action.type === "RESIZE_COLUMN" &&
+        tableContent &&
+        state.selectionMode === "column"
+      ) {
         const colIdx = state.cursorCol - state.colsOffset;
         if (colIdx >= 0 && colIdx < tableContent.colWidths.length) {
           dispatch({ ...action, currentWidth: tableContent.colWidths[colIdx] });
@@ -381,9 +496,13 @@ export function TablensApp({ file, query, source }: { file: string; query?: stri
         top={0}
         left={0}
         width="100%"
-        height={
-          renderer.terminalHeight - 1 - (renderer.console.visible ? renderer.console.bounds.height : 0)
-        }
+        height={(() => {
+          const consoleHeight =
+            renderer.console.visible && renderer.console.bounds?.height
+              ? Number(renderer.console.bounds.height) || 0
+              : 0;
+          return Math.max(1, renderer.terminalHeight - 1 - consoleHeight);
+        })()}
       >
         {tableContent ? (
           <text
@@ -448,15 +567,22 @@ export function TablensApp({ file, query, source }: { file: string; query?: stri
         height={1}
       >
         {state.searchActive ||
-          searchQuery.length > 0 ||
-          searchUseRegex ||
-          searchWholeWord ||
-          searchCaseSensitive ? (
+        searchQuery.length > 0 ||
+        searchUseRegex ||
+        searchWholeWord ||
+        searchCaseSensitive ? (
           <SearchBar
             query={searchQuery}
-            onInput={(value) => dispatch({ type: "SET_SEARCH_QUERY", query: value })}
+            onInput={(value) =>
+              dispatch({ type: "SET_SEARCH_QUERY", query: value })
+            }
             onSubmit={(value) => {
-              performSearch(value, searchUseRegex, searchWholeWord, searchCaseSensitive);
+              performSearch(
+                value,
+                searchUseRegex,
+                searchWholeWord,
+                searchCaseSensitive,
+              );
               dispatch({ type: "EXIT_SEARCH" });
             }}
             useRegex={searchUseRegex}
@@ -470,6 +596,7 @@ export function TablensApp({ file, query, source }: { file: string; query?: stri
             numCols={headers.length}
             loading={searchLoading}
             isMaterialized={isMaterialized}
+            sorting={sorting}
           />
         ) : (
           <StatusLine
@@ -485,6 +612,8 @@ export function TablensApp({ file, query, source }: { file: string; query?: stri
             searchMatchRowCount={searchMatchRowCount}
             searchError={state.searchError}
             isMaterialized={isMaterialized}
+            sorting={sorting}
+            selectionMode={selectionMode}
           />
         )}
       </box>

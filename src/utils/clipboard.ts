@@ -1,7 +1,7 @@
 export async function copyToClipboard(text: string): Promise<void> {
   const platform = process.platform;
   let command: string[];
-  
+
   if (platform === "darwin") {
     command = ["pbcopy"];
   } else if (platform === "win32") {
@@ -10,18 +10,18 @@ export async function copyToClipboard(text: string): Promise<void> {
     // Linux - try xclip first, fallback to xsel
     command = ["xclip", "-selection", "clipboard"];
   }
-  
+
   const proc = Bun.spawn(command, {
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
   });
-  
+
   await proc.stdin.write(text);
   proc.stdin.end();
-  
+
   await proc.exited;
-  
+
   if (proc.exitCode !== 0 && platform !== "darwin" && platform !== "win32") {
     // Try xsel as fallback on Linux
     const proc2 = Bun.spawn(["xsel", "--clipboard", "--input"], {
