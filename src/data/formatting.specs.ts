@@ -16,7 +16,7 @@ describe("DuckDBDataSource SQL Formatting", () => {
   afterAll(() => {
     try {
       unlinkSync(TEST_FMT_CSV);
-    } catch {}
+    } catch { }
   });
 
   it("should pad columns if widths are provided", async () => {
