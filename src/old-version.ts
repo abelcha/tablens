@@ -317,14 +317,14 @@ async function main() {
     // 5. Update UI
     tableText.content = parseBlessedTags(
       buildHeaderLine(dispHeaders, colWidths) +
-        buildSeparatorLine(colWidths) +
-        visRows
-          .map((r, i) =>
-            Array.from({ length: visHeights[i] || 1 }, (_, h) =>
-              buildRowLine(r, colWidths, state.wrapMode, h),
-            ).join(""),
-          )
-          .join(""),
+      buildSeparatorLine(colWidths) +
+      visRows
+        .map((r, i) =>
+          Array.from({ length: visHeights[i] || 1 }, (_, h) =>
+            buildRowLine(r, colWidths, state.wrapMode, h),
+          ).join(""),
+        )
+        .join(""),
     );
 
     const relR = state.cursorRow - state.rowsOffset;
