@@ -35,9 +35,9 @@ export function initialState(): State & { lastRequestId: number; counter: number
 }
 
 export function reducer(
-  state: State & { lastRequestId: number; counter: number },
+  state: State & { lastRequestId: number; counter: number; renameActive: boolean; renameQuery: string },
   action: Action,
-): State & { lastRequestId: number; counter: number } {
+): State & { lastRequestId: number; counter: number; renameActive: boolean; renameQuery: string } {
   switch (action.type) {
     case "INC_COUNTER":
       return { ...state, counter: state.counter + 1 };
@@ -279,6 +279,15 @@ export function reducer(
       // No state change, just side effect
       return state;
     }
+    case "ENTER_RENAME_COLUMN": {
+      if (state.selectionMode !== "column") return state;
+      const currentHeader = state.headers[state.cursorCol] || "";
+      return { ...state, renameActive: true, renameQuery: currentHeader };
+    }
+    case "EXIT_RENAME_COLUMN":
+      return { ...state, renameActive: false, renameQuery: "" };
+    case "SET_RENAME_QUERY":
+      return { ...state, renameQuery: action.query };
     default:
       return state;
   }

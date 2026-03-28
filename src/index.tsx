@@ -21,6 +21,7 @@ import { computeViewportPatch } from "src/app/viewport";
 import { SearchBar } from "src/app/components/SearchBar";
 import { StatusLine } from "src/app/components/StatusLine";
 import { EmptyState } from "src/app/components/EmptyState";
+import { RenameBar } from "src/app/components/RenameBar";
 import { parseInlineMarkup } from "src/app/markup";
 
 declare module "@opentui/react" {
@@ -107,6 +108,8 @@ export function TablensApp({
     searchMatchRowCount,
     isMaterialized,
     sorter,
+    renameActive,
+    renameQuery,
   } = state;
 
   // Poll for materialization status until complete
@@ -127,6 +130,7 @@ export function TablensApp({
   const [appliedSearchQuery, setAppliedSearchQuery] = useState(searchQuery);
   const [searchLoading, setSearchLoading] = useState(false);
   const [sorting, setSorting] = useState(false);
+  const [renaming, setRenaming] = useState(false);
 
   const lastAppliedParams = useRef({
     query: "",
@@ -187,6 +191,29 @@ export function TablensApp({
         })
         .finally(() => {
           setSearchLoading(false);
+        });
+    },
+    [source],
+  );
+
+  const performRename = useCallback(
+    (oldName: string, newName: string) => {
+      if (oldName === newName || newName.trim() === "") {
+        dispatch({ type: "EXIT_RENAME_COLUMN" });
+        return;
+      }
+      setRenaming(true);
+      source
+        .renameColumn(oldName, newName.trim())
+        .then(() => {
+          dispatch({ type: "SET_HEADERS", headers: source.getHeaders() });
+          dispatch({ type: "EXIT_RENAME_COLUMN" });
+        })
+        .catch((err) => {
+          console.error("Rename failed:", err);
+        })
+        .finally(() => {
+          setRenaming(false);
         });
     },
     [source],
@@ -466,6 +493,11 @@ export function TablensApp({
       return;
     }
 
+    if (key.name === "e" && state.selectionMode === "column") {
+      dispatch({ type: "ENTER_RENAME_COLUMN" });
+      return;
+    }
+
     const pageSize = renderer.terminalHeight - 4;
     const actions = keyToActions(key, { pageSize });
     actions.forEach((action) => {
@@ -566,7 +598,20 @@ export function TablensApp({
         width="100%"
         height={1}
       >
-        {state.searchActive ||
+        {renameActive ? (
+          <RenameBar
+            query={renameQuery}
+            onInput={(value) =>
+              dispatch({ type: "SET_RENAME_QUERY", query: value })
+            }
+            onSubmit={(value) => {
+              const oldName = headers[cursorCol];
+              if (oldName) performRename(oldName, value);
+            }}
+            columnName={headers[cursorCol] || ""}
+            saving={renaming}
+          />
+        ) : state.searchActive ||
         searchQuery.length > 0 ||
         searchUseRegex ||
         searchWholeWord ||

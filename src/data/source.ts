@@ -68,8 +68,10 @@ export class DuckDBDataSource {
 
     let sql = "";
     if (typeof args === "string") {
+      this.filePath = args;
       sql = `SELECT * FROM '${args}'`;
     } else {
+      this.filePath = args.filePath || null;
       sql = args.query || `SELECT * FROM '${args.filePath}'`;
     }
     sql = sql.replace('grid_mess_poids', 'import_cache.grid_mess_poids')
@@ -351,5 +353,56 @@ export class DuckDBDataSource {
   async close() {
     this.conn = null;
     this.instance = null;
+  }
+
+  getFilePath(): string | null {
+    return this.filePath;
+  }
+
+  async renameColumn(oldName: string, newName: string): Promise<void> {
+    if (!this.conn || !this.filePath) throw new Error("Not connected or no file path");
+    if (!this.filePath.endsWith(".parquet")) {
+      throw new Error("Column rename only supported for parquet files");
+    }
+
+    const { copyFileSync } = await import("fs");
+    const { basename } = await import("path");
+
+    // Backup original file to /tmp
+    const backupPath = `/tmp/${basename(this.filePath)}.${Date.now()}.bak`;
+    copyFileSync(this.filePath, backupPath);
+    console.log(`Backed up ${this.filePath} to ${backupPath}`);
+
+    // Build SELECT with renamed column
+    const selectCols = this.headers.map((h) => {
+      if (h === oldName) {
+        return `${this.quoteIdent(h)} AS ${this.quoteIdent(newName)}`;
+      }
+      return this.quoteIdent(h);
+    });
+
+    // Write to temp file first, then replace original
+    const tempOut = `/tmp/${basename(this.filePath)}.tmp.parquet`;
+    await this.conn.run(
+      `COPY (SELECT ${selectCols.join(", ")} FROM ${this.tableName}) TO '${tempOut}' (FORMAT PARQUET)`
+    );
+
+    // Replace original with renamed version
+    const { renameSync } = await import("fs");
+    renameSync(tempOut, this.filePath);
+
+    // Update internal headers
+    this.headers = this.headers.map((h) => (h === oldName ? newName : h));
+
+    // Recreate view with new schema
+    await this.conn.run(`CREATE OR REPLACE VIEW ${this.tableName} AS SELECT * FROM '${this.filePath}'`);
+
+    // Re-materialize if needed
+    if (this.isMaterialized) {
+      const materializedName = `${this.tableName}_materialized`;
+      await this.conn.run(`DROP TABLE IF EXISTS ${materializedName}`);
+      await this.conn.run(`CREATE TABLE ${materializedName} AS SELECT * FROM ${this.tableName}`);
+      await this.conn.run(`CREATE OR REPLACE VIEW ${this.tableName} AS SELECT * FROM ${materializedName}`);
+    }
   }
 }
