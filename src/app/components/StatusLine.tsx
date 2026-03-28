@@ -15,6 +15,8 @@ export function StatusLine({
   searchMatchRowCount = null,
   searchError = null,
   isMaterialized = false,
+  sorting = false,
+  selectionMode = "row",
 }: {
   file: string;
   cursorRow: number;
@@ -28,21 +30,28 @@ export function StatusLine({
   searchMatchRowCount?: number | null;
   searchError?: string | null;
   isMaterialized?: boolean;
+  sorting?: boolean;
+  selectionMode?: string;
 }) {
-  const ramIndicator = isMaterialized ? "{green} ● RAM {/green}" : "{yellow} ○ initializing ... {/yellow}";
+  const ramIndicator = sorting
+    ? "{yellow} ● Sorting... {/yellow}"
+    : isMaterialized
+      ? "{green} ● RAM {/green}"
+      : "{yellow} ○ initializing ... {/yellow}";
 
   // csvlens format: medium.csv [Row 1/10000, Col 1/20]
   const filterLabel =
     searchQuery.length > 0
       ? ` | Filter: /${searchQuery}/` +
-      (searchUseRegex ? " (.*)" : "") +
-      (searchWholeWord ? " (W)" : "") +
-      (searchCaseSensitive ? " (Aa)" : "") +
-      (searchMatchRowCount !== null ? ` [${searchMatchRowCount} rows]` : "")
+        (searchUseRegex ? " (.*)" : "") +
+        (searchWholeWord ? " (W)" : "") +
+        (searchCaseSensitive ? " (Aa)" : "") +
+        (searchMatchRowCount !== null ? ` [${searchMatchRowCount} rows]` : "")
       : "";
   const errorLabel = searchError ? ` | Error: ${searchError}` : "";
-  const content = `${file} [Row ${cursorRow + 1}/${totalRowCount}, Col ${cursorCol + 1}/${numCols}]${filterLabel}${errorLabel}`;
-  
+  const modeLabel = `{bold}[${selectionMode.toUpperCase()}]{/bold}`;
+  const content = `${modeLabel} ${file} [Row ${cursorRow + 1}/${totalRowCount}, Col ${cursorCol + 1}/${numCols}]${filterLabel}${errorLabel}`;
+
   return (
     <box flexDirection="row" width="100%" height={1}>
       <text content={parseInlineMarkup(content)} left={0} style={{ flexGrow: 1 }} />
