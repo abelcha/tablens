@@ -15,6 +15,7 @@ export class DuckDBDataSource {
   } | null = null;
   private searchResultCount: number = 0;
   private isMaterialized: boolean = false;
+  private filePath: string | null = null;
 
   constructor() { }
 
@@ -61,6 +62,7 @@ export class DuckDBDataSource {
   }
 
   async connect(args: string | { filePath?: string; query?: string }) {
+    console.log({ args });
     this.instance = await DuckDBInstance.create();
     this.conn = await this.instance.connect();
 
@@ -70,13 +72,18 @@ export class DuckDBDataSource {
     } else {
       sql = args.query || `SELECT * FROM '${args.filePath}'`;
     }
+    sql = sql.replace('grid_mess_poids', 'import_cache.grid_mess_poids')
 
+    const [...statements] = sql.split(";");
+    if (statements.length > 1) {
+      sql = statements.pop() as string
+      console.log('RUNNING PRE STATEMENT', statements.slice(0, 1).join(';'))
+      await this.conn.run(statements.slice(0, 1).join(';'))
+    }
     // Create a view instead of a table to avoid full scans on connect
     // Especially important for large Parquet files where window functions (row_number)
     // would force a full scan of the dataset.
-    await this.conn.run(
-      `CREATE OR REPLACE VIEW ${this.tableName} AS ${sql}`,
-    );
+    await this.conn.run(`CREATE OR REPLACE VIEW ${this.tableName} AS ${sql}`);
 
     // Get headers
     const result = await this.conn.run(`SELECT * FROM ${this.tableName} LIMIT 0`);
@@ -100,10 +107,12 @@ export class DuckDBDataSource {
         const bgConn = await instance.connect();
         const materializedName = `${tableName}_materialized`;
         await bgConn.run(`CREATE TABLE ${materializedName} AS SELECT * FROM ${tableName}`);
-        await bgConn.run(`CREATE OR REPLACE VIEW ${tableName} AS SELECT * FROM ${materializedName}`);
+        await bgConn.run(
+          `CREATE OR REPLACE VIEW ${tableName} AS SELECT * FROM ${materializedName}`,
+        );
         this.isMaterialized = true;
       } catch (err) {
-        // If background materialization fails (e.g. out of memory), 
+        // If background materialization fails (e.g. out of memory),
         // we still have the view to fall back on.
         console.error("Background materialization failed:", err);
       }
@@ -169,7 +178,9 @@ export class DuckDBDataSource {
             ? this.buildMatchExpr({ colIdent, query, useRegex, wholeWord, caseSensitive })
             : "false",
         )
-        : colIdents.map((colIdent) => this.buildMatchExpr({ colIdent, query, useRegex, wholeWord, caseSensitive }));
+        : colIdents.map((colIdent) =>
+          this.buildMatchExpr({ colIdent, query, useRegex, wholeWord, caseSensitive }),
+        );
 
     const sql = `SELECT ${colIdents.join(", ")}, ${matchExprs
       .map((e, i) => `${e} AS ${this.quoteIdent(`__m${i}`)}`)
@@ -312,6 +323,29 @@ export class DuckDBDataSource {
     }
 
     return { rows: stringRows, matches };
+  }
+
+  async applySort(args: { column: string; direction: "asc" | "desc" }): Promise<void> {
+    const { column, direction } = args;
+    if (!this.conn) throw new Error("Not connected");
+
+    const materializedName = `${this.tableName}_materialized`;
+    const colIdent = this.quoteIdent(column);
+    const dirSql = direction.toUpperCase();
+
+    // Re-materialize the table with the new sort order
+    // This allows fast scrolling/pagination via CREATE TABLE AS SELECT ... ORDER BY
+    await this.conn.run(`CREATE OR REPLACE TABLE ${materializedName} AS 
+      SELECT * FROM ${materializedName} 
+      ORDER BY ${colIdent} ${dirSql}`);
+
+    // Update the view to point to the newly sorted materialized table
+    await this.conn.run(
+      `CREATE OR REPLACE VIEW ${this.tableName} AS SELECT * FROM ${materializedName}`,
+    );
+
+    // If search was applied, it will need to be re-applied against the new sort order
+    // by the caller (index.tsx)
   }
 
   async close() {

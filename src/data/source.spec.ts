@@ -58,4 +58,27 @@ describe("DuckDBDataSource", () => {
 
     await source.close();
   });
+
+  it("should apply sort and re-materialize", async () => {
+    const source = new DuckDBDataSource();
+    await source.connect({ filePath: TEST_CSV });
+
+    // Initial first row is ID 0
+    let rows = await source.getRows(0, 1);
+    expect(rows[0][0]).toBe("0");
+
+    // Sort by Name DESC
+    await source.applySort({ column: "Name", direction: "desc" });
+
+    // Now first row should be Name9 (ID 9)
+    rows = await source.getRows(0, 1);
+    expect(rows[0][0]).toBe("9");
+
+    // Sort by Name ASC
+    await source.applySort({ column: "Name", direction: "asc" });
+    rows = await source.getRows(0, 1);
+    expect(rows[0][0]).toBe("0");
+
+    await source.close();
+  });
 });
