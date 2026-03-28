@@ -54,21 +54,32 @@ export function computeTableContentModel(args: {
   const dataPadding = 2; // "│ "
   let tableW = termW - gutterWidth - dataPadding;
 
-  const dispHeaders = headers.slice(colsOffset);
   const adjustedOverrides: Record<number, number> = {};
   for (const [idx, width] of Object.entries(columnOverrides)) {
     const i = parseInt(idx);
     if (i >= colsOffset) adjustedOverrides[i - colsOffset] = width;
   }
 
-  const colWidths = computeColumnWidths(
-    dispHeaders,
+  const fullColWidths = computeColumnWidths(
+    headers.slice(colsOffset),
     visibleRows.map((r) => r.slice(colsOffset)),
     tableW,
     adjustedOverrides,
   );
+
+  let usedWidth = 0;
+  let visibleColCount = 0;
+  for (const w of fullColWidths) {
+    if (usedWidth + w > tableW && visibleColCount > 0) break;
+    usedWidth += w;
+    visibleColCount++;
+  }
+
+  const colWidths = fullColWidths.slice(0, visibleColCount);
+  const dispHeaders = headers.slice(colsOffset, colsOffset + visibleColCount);
+
   const rowHeights = computeRowHeights(
-    visibleRows.map((r) => r.slice(colsOffset, colsOffset + colWidths.length)),
+    visibleRows.map((r) => r.slice(colsOffset, colsOffset + visibleColCount)),
     colWidths,
     wrapMode,
   );
@@ -103,20 +114,22 @@ export function computeTableContentModel(args: {
       ? selectedColIdx
       : undefined;
 
+  const maxTableWidth = termW - gutterWidth - dataPadding;
+
   const content = parseInlineMarkup(
     // "\n" + // Blank line at the top
-    buildSeparatorLine(colWidths, 0) +
-      buildHeaderLine(dispHeaders, colWidths, gutterWidth, validSelectedColIdx, true) +
-      buildSeparatorLine(colWidths, gutterWidth) +
-      visRows
-        .map((r, i) => {
-          const rowNum = rowsOffset + i + 1;
-          return Array.from({ length: visHeights[i] || 1 }, (_, h) =>
-            buildRowLine(r, colWidths, wrapMode, h, rowNum, gutterWidth, visMatches?.[i]),
-          ).join("");
-        })
-        .join("") +
-      buildBottomSeparatorLine(colWidths, gutterWidth),
+    buildSeparatorLine(colWidths, 0, maxTableWidth + gutterWidth + dataPadding) +
+    buildHeaderLine(dispHeaders, colWidths, gutterWidth, validSelectedColIdx, true) +
+    buildSeparatorLine(colWidths, gutterWidth, termW) +
+    visRows
+      .map((r, i) => {
+        const rowNum = rowsOffset + i + 1;
+        return Array.from({ length: visHeights[i] || 1 }, (_, h) =>
+          buildRowLine(r, colWidths, wrapMode, h, rowNum, gutterWidth, visMatches?.[i]),
+        ).join("");
+      })
+      .join("") +
+    buildBottomSeparatorLine(colWidths, gutterWidth, termW),
   );
 
   return { content, colWidths, rowHeights, gutterWidth, visCount };

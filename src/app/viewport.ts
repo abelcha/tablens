@@ -19,6 +19,7 @@ export async function computeViewportPatch(args: {
   lastRenderedUseRegex: boolean;
   lastRenderedWholeWord: boolean;
   lastRenderedCaseSensitive: boolean;
+  lastRenderedSorter: { column: number; direction: "asc" | "desc" } | null;
 }): Promise<ViewportPatch> {
   const {
     state,
@@ -30,13 +31,14 @@ export async function computeViewportPatch(args: {
     lastRenderedUseRegex,
     lastRenderedWholeWord,
     lastRenderedCaseSensitive,
+    lastRenderedSorter,
   } = args;
   const { headers, selectionMode, cursorRow, cursorCol, wrapMode, columnOverrides } = state;
   let { rowsOffset, colsOffset, visibleRows, visibleMatches } = state;
 
   // Fetch more rows to support larger sample window for column width calculation
   // This prevents columns from disappearing/reappearing with sparse data
-  const fetchLimit = Math.max(termH * 2, 200);
+  const fetchLimit = Math.max(Math.floor((termH || 20) * 2), 200);
 
   // 1. Vertical scrolling (if needed by cursor)
   if (selectionMode !== "column" && cursorRow < rowsOffset) {
@@ -48,10 +50,14 @@ export async function computeViewportPatch(args: {
     state.searchQuery !== lastRenderedQuery ||
     state.searchUseRegex !== lastRenderedUseRegex ||
     state.searchWholeWord !== lastRenderedWholeWord ||
-    state.searchCaseSensitive !== lastRenderedCaseSensitive;
+    state.searchCaseSensitive !== lastRenderedCaseSensitive ||
+    JSON.stringify(state.sorter) !== JSON.stringify(lastRenderedSorter);
 
   if (queryChanged) {
-    rowsOffset = 0;
+    // If it's a sort change, we might want to keep the offset if we were clever,
+    // but resetting to 0 is safer and often what users expect when sorting changes.
+    // The SORT action already resets rowsOffset to 0, so this just ensures we re-fetch.
+    rowsOffset = state.rowsOffset;
   }
 
   if (rowsOffset !== lastRenderedOffset || visibleRows.length === 0 || queryChanged) {
@@ -87,10 +93,14 @@ export async function computeViewportPatch(args: {
     return adjusted;
   };
 
+  const gutterWidth = String(state.totalRowCount).length;
+  const dataPadding = 2;
+  const effectiveW = termW - gutterWidth - dataPadding;
+
   let colWidths = computeColumnWidths(
     dispHeaders,
     visibleRows.map((r) => r.slice(colsOffset)),
-    termW,
+    effectiveW,
     getAdjustedOverrides(colsOffset),
   );
 
@@ -100,7 +110,7 @@ export async function computeViewportPatch(args: {
     for (let i = 0; i < relC; i++) tw += colWidths[i] || 0;
 
     while (
-      (relC >= colWidths.length || tw + (colWidths[relC] || 0) > termW) &&
+      (relC >= colWidths.length || tw + (colWidths[relC] || 0) > effectiveW) &&
       colsOffset < headers.length - 1
     ) {
       colsOffset++;
@@ -109,7 +119,7 @@ export async function computeViewportPatch(args: {
       colWidths = computeColumnWidths(
         dispHeaders,
         visibleRows.map((r) => r.slice(colsOffset)),
-        termW,
+        effectiveW,
         getAdjustedOverrides(colsOffset),
       );
       tw = 0;
