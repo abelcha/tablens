@@ -2,7 +2,7 @@ import type { State, SelectionMode } from "src/types";
 import type { Action } from "src/app/actions";
 import { copyToClipboard, formatRowAsCsv } from "src/utils/clipboard";
 
-export function initialState(): State & { lastRequestId: number; counter: number } {
+export function initialState(): State & { lastRequestId: number; counter: number; renameActive: boolean; renameQuery: string } {
   return {
     rowsOffset: 0,
     colsOffset: 0,
@@ -29,6 +29,8 @@ export function initialState(): State & { lastRequestId: number; counter: number
     isMaterialized: false,
     lastRequestId: 0,
     counter: 0,
+    renameActive: false,
+    renameQuery: "",
   };
 }
 
@@ -55,7 +57,8 @@ export function reducer(
     }
     case "MOVE_DOWN": {
       const next = { ...state };
-      const maxRows = state.searchMatchRowCount !== null ? state.searchMatchRowCount : state.totalRowCount;
+      const maxRows =
+        state.searchMatchRowCount !== null ? state.searchMatchRowCount : state.totalRowCount;
       if (state.selectionMode === "column") {
         // In column mode, scroll down as if cursor is at last visible row
         const maxScroll = Math.max(0, maxRows - action.pageSize);
@@ -101,7 +104,8 @@ export function reducer(
     }
     case "PAGE_DOWN": {
       const next = { ...state };
-      const maxRows = state.searchMatchRowCount !== null ? state.searchMatchRowCount : state.totalRowCount;
+      const maxRows =
+        state.searchMatchRowCount !== null ? state.searchMatchRowCount : state.totalRowCount;
       const lastVisibleRow = state.rowsOffset + action.pageSize - 3;
       const isAtBottom = state.cursorRow >= lastVisibleRow;
       if (isAtBottom) {
@@ -152,6 +156,15 @@ export function reducer(
       return { ...state, searchError: action.error };
     case "SET_MATERIALIZED":
       return { ...state, isMaterialized: action.isMaterialized };
+    case "SORT": {
+      if (state.selectionMode !== "column") return state;
+      return {
+        ...state,
+        sorter: { column: state.cursorCol, direction: action.direction },
+        rowsOffset: 0,
+        cursorRow: 0,
+      };
+    }
     case "SET_TOTAL_ROW_COUNT": {
       const maxRows = state.searchMatchRowCount !== null ? state.searchMatchRowCount : action.count;
       return {
@@ -189,7 +202,7 @@ export function reducer(
     }
     case "AUTO_RESIZE_COLUMNS": {
       const hasOverrides = Object.keys(state.columnOverrides).length > 0;
-      
+
       if (hasOverrides) {
         // Reset to default (clear all overrides)
         return {
@@ -197,15 +210,15 @@ export function reducer(
           columnOverrides: {},
         };
       }
-      
+
       // Auto-resize all columns to fit header and cell content
       const widths: Record<number, number> = {};
       const MIN_COLUMN_WIDTH = 6;
-      
+
       for (let colIdx = 0; colIdx < action.headers.length; colIdx++) {
         const headerLength = action.headers[colIdx]?.length || 0;
         let maxCellLength = 0;
-        
+
         // Check all visible rows for this column
         for (const row of action.visibleRows) {
           if (colIdx < row.length) {
@@ -217,11 +230,11 @@ export function reducer(
             }
           }
         }
-        
+
         // Set width to max of header and max cell content, with minimum width
         widths[colIdx] = Math.max(headerLength, maxCellLength, MIN_COLUMN_WIDTH);
       }
-      
+
       return {
         ...state,
         columnOverrides: widths,
@@ -229,7 +242,7 @@ export function reducer(
     }
     case "YANK": {
       const { selectionMode, cursorRow, cursorCol, visibleRows, headers, rowsOffset } = action;
-      
+
       if (selectionMode === "cell") {
         // Copy cell value
         const relativeRow = cursorRow - rowsOffset;
@@ -262,7 +275,7 @@ export function reducer(
           }
         }
       }
-      
+
       // No state change, just side effect
       return state;
     }
