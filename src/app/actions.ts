@@ -20,13 +20,17 @@ export type Action =
   | { type: "SET_SEARCH_MATCH_ROW_COUNT"; count: number | null }
   | { type: "SET_SEARCH_ERROR"; error: string | null }
   | { type: "SET_MATERIALIZED"; isMaterialized: boolean }
+  | { type: "SORT"; direction: "asc" | "desc" }
   | { type: "AUTO_RESIZE_COLUMNS"; headers: string[]; visibleRows: string[][] }
+  | { type: "ENTER_RENAME_COLUMN" }
+  | { type: "EXIT_RENAME_COLUMN" }
+  | { type: "SET_RENAME_QUERY"; query: string }
   | {
-      type: "YANK";
-      selectionMode: "cell" | "row" | "column";
-      cursorRow: number;
-      cursorCol: number;
-      visibleRows: string[][];
-      headers: string[];
-      rowsOffset: number;
-    };
+    type: "YANK";
+    selectionMode: "cell" | "row" | "column";
+    cursorRow: number;
+    cursorCol: number;
+    visibleRows: string[][];
+    headers: string[];
+    rowsOffset: number;
+  };

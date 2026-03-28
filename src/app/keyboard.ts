@@ -1,7 +1,13 @@
 import { type KeyEvent } from "@opentui/core";
 import { Action } from "src/app/actions";
+import { appendFileSync } from "fs";
 
 export function keyToActions(key: KeyEvent, ctx: { pageSize: number }): Action[] {
+  // Debug logging to help identify why shift+up/down might not be working
+  try {
+    appendFileSync("keyboard_debug.log", JSON.stringify(key) + " mode: " + ctx.pageSize + "\n");
+  } catch (e) { }
+
   const actions: Action[] = [];
 
   switch (key.name) {
@@ -9,12 +15,30 @@ export function keyToActions(key: KeyEvent, ctx: { pageSize: number }): Action[]
       actions.push({ type: "ENTER_SEARCH" });
       break;
     case "up":
+    case "Up":
     case "k":
-      actions.push({ type: "MOVE_UP", pageSize: ctx.pageSize });
+    case "K":
+      if (key.shift || key.name === "K" || key.name === "Up") {
+        actions.push({ type: "SORT", direction: "asc" });
+      } else {
+        actions.push({ type: "MOVE_UP", pageSize: ctx.pageSize });
+      }
       break;
     case "down":
+    case "Down":
     case "j":
-      actions.push({ type: "MOVE_DOWN", pageSize: ctx.pageSize });
+    case "J":
+      if (key.shift || key.name === "J" || key.name === "Down") {
+        actions.push({ type: "SORT", direction: "desc" });
+      } else {
+        actions.push({ type: "MOVE_DOWN", pageSize: ctx.pageSize });
+      }
+      break;
+    case "[":
+      actions.push({ type: "SORT", direction: "asc" });
+      break;
+    case "]":
+      actions.push({ type: "SORT", direction: "desc" });
       break;
     case "left":
     case "h":
