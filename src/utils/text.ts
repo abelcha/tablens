@@ -1,6 +1,11 @@
 import type { WrapMode } from "src/types";
 
 export const LEFT_PADDING = 1;
+
+// Escape curly braces so they're not interpreted as markup tags
+function escapeMarkup(text: string): string {
+  return text.replace(/\{/g, "\\{").replace(/\}/g, "\\}");
+}
 export const RIGHT_PADDING = 1;
 export const NUM_SPACES_BETWEEN_COLUMNS = LEFT_PADDING + RIGHT_PADDING;
 
@@ -82,10 +87,11 @@ export function buildHeaderLine(
     }
     const leftPad = " ".repeat(LEFT_PADDING);
     const rightPad = " ".repeat(Math.max(0, width - text.length - LEFT_PADDING));
+    const escaped = escapeMarkup(text);
     if (isSelected) {
-      line += leftPad + `{orange}{bold}{underline}${text}{/underline}{/bold}{/orange}` + rightPad;
+      line += leftPad + `{orange}{bold}{underline}${escaped}{/underline}{/bold}{/orange}` + rightPad;
     } else {
-      line += leftPad + `{orange}{bold}${text}{/bold}{/orange}` + rightPad;
+      line += leftPad + `{orange}{bold}${escaped}{/bold}{/orange}` + rightPad;
     }
   });
   return line + "\n";
@@ -165,10 +171,11 @@ export function buildRowLine(
     const leftPad = " ".repeat(LEFT_PADDING);
     const rightPad = " ".repeat(Math.max(0, width - text.length - LEFT_PADDING));
     const isMatch = Boolean(matches?.[colIdx]);
+    const escaped = escapeMarkup(text);
     if (isMatch) {
-      line += leftPad + `{yellow}{underline}${text}{/underline}{/yellow}` + rightPad;
+      line += leftPad + `{yellow}{underline}${escaped}{/underline}{/yellow}` + rightPad;
     } else {
-      line += leftPad + `{lightgray}${text}{/lightgray}` + rightPad;
+      line += leftPad + `{lightgray}${escaped}{/lightgray}` + rightPad;
     }
   });
   return line + "\n";

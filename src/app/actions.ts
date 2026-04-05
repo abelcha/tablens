@@ -25,6 +25,13 @@ export type Action =
   | { type: "ENTER_RENAME_COLUMN" }
   | { type: "EXIT_RENAME_COLUMN" }
   | { type: "SET_RENAME_QUERY"; query: string }
+  | { type: "PROMPT_SAVE_PATH"; defaultPath?: string }
+  | { type: "SET_SAVE_PATH_QUERY"; query: string }
+  | { type: "EXIT_SAVE_PATH_PROMPT" }
+  | { type: "OPEN_QUERY_EDITOR"; query: string }
+  | { type: "SET_QUERY_EDITOR_VALUE"; query: string }
+  | { type: "CLOSE_QUERY_EDITOR" }
+  | { type: "SET_VISIBLE_ROWS"; rows: string[][] }
   | {
     type: "YANK";
     selectionMode: "cell" | "row" | "column";

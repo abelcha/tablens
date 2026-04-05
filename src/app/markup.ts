@@ -4,7 +4,10 @@ import { StyledText, RGBA } from "@opentui/core";
 export function parseInlineMarkup(text: string): StyledText {
   const chunks: any[] = [];
   const stack: { attr: number; color?: string }[] = [];
-  let remaining = text;
+  // Use placeholders for escaped braces so they don't interfere with tag parsing
+  const OPEN_PLACEHOLDER = "\x00OPEN\x00";
+  const CLOSE_PLACEHOLDER = "\x00CLOSE\x00";
+  let remaining = text.replace(/\\\{/g, OPEN_PLACEHOLDER).replace(/\\\}/g, CLOSE_PLACEHOLDER);
 
   const themeColors: Record<string, string> = {
     yellow: "#EBC06D",
@@ -71,6 +74,15 @@ export function parseInlineMarkup(text: string): StyledText {
     }
 
     remaining = remaining.substring(tagIndex + tagFull.length);
+  }
+
+  // Convert placeholders back to actual braces in all chunk texts
+  for (const chunk of chunks) {
+    if (chunk.text) {
+      chunk.text = chunk.text
+        .replace(new RegExp(OPEN_PLACEHOLDER, "g"), "{")
+        .replace(new RegExp(CLOSE_PLACEHOLDER, "g"), "}");
+    }
   }
 
   return new StyledText(chunks);

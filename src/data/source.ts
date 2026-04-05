@@ -16,6 +16,9 @@ export class DuckDBDataSource {
   private searchResultCount: number = 0;
   private isMaterialized: boolean = false;
   private filePath: string | null = null;
+  private editedFilePath: string | null = null;
+  private originalQuery: string | null = null;
+  private autocompleteLoaded: boolean = false;
 
   constructor() { }
 
@@ -30,6 +33,28 @@ export class DuckDBDataSource {
   private escapeRegexLiteral(text: string): string {
     // Escape regex meta characters for DuckDB/RE2
     return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  private valueToString(val: unknown): string {
+    if (val === null || val === undefined) return "";
+    if (typeof val === "bigint") return val.toString();
+    if (val instanceof Date) {
+      return val.toISOString().split("T")[0]; // YYYY-MM-DD
+    }
+    if (typeof val === "object") {
+      const obj = val as Record<string, unknown>;
+      // DuckDB Date32 returns {days: number} - convert to ISO date
+      if ("days" in obj && typeof obj.days === "number" && Object.keys(obj).length === 1) {
+        const date = new Date(obj.days * 24 * 60 * 60 * 1000);
+        return date.toISOString().split("T")[0];
+      }
+      return JSON.stringify(val, (_, v) => {
+        if (typeof v === "bigint") return v.toString();
+        if (v instanceof Date) return v.toISOString().split("T")[0];
+        return v;
+      });
+    }
+    return String(val);
   }
 
   private buildMatchExpr(args: {
@@ -72,6 +97,7 @@ export class DuckDBDataSource {
       sql = `SELECT * FROM '${args}'`;
     } else {
       this.filePath = args.filePath || null;
+      this.originalQuery = args.query || null;
       sql = args.query || `SELECT * FROM '${args.filePath}'`;
     }
     sql = sql.replace('grid_mess_poids', 'import_cache.grid_mess_poids')
@@ -98,27 +124,21 @@ export class DuckDBDataSource {
     const countVal = countRows[0] ? countRows[0][0] : 0;
     this.totalRows = Number(countVal);
 
-    // Background materialization: Load the full thing into RAM as a table
-    // so subsequent searches and scrolling are fast, while the first row
-    // is shown immediately via the view.
-    const instance = this.instance;
-    const tableName = this.tableName;
-    (async () => {
-      if (!instance) return;
-      try {
-        const bgConn = await instance.connect();
-        const materializedName = `${tableName}_materialized`;
-        await bgConn.run(`CREATE TABLE ${materializedName} AS SELECT * FROM ${tableName}`);
-        await bgConn.run(
-          `CREATE OR REPLACE VIEW ${tableName} AS SELECT * FROM ${materializedName}`,
-        );
-        this.isMaterialized = true;
-      } catch (err) {
-        // If background materialization fails (e.g. out of memory),
-        // we still have the view to fall back on.
-        console.error("Background materialization failed:", err);
-      }
-    })();
+    // Materialize into RAM table for fast scrolling/search
+    await this.materialize();
+  }
+
+  private async materialize(): Promise<void> {
+    if (!this.instance) return;
+    try {
+      const materializedName = `${this.tableName}_materialized`;
+      await this.conn!.run(`DROP TABLE IF EXISTS ${materializedName}`);
+      await this.conn!.run(`CREATE TABLE ${materializedName} AS SELECT * FROM ${this.tableName}`);
+      await this.conn!.run(`CREATE OR REPLACE VIEW ${this.tableName} AS SELECT * FROM ${materializedName}`);
+      this.isMaterialized = true;
+    } catch (err) {
+      console.error("Materialization failed:", err);
+    }
   }
 
   getIsMaterialized(): boolean {
@@ -148,12 +168,7 @@ export class DuckDBDataSource {
     for (const row of rows) {
       const stringRow: string[] = [];
       for (let i = 0; i < this.headers.length; i++) {
-        const val = row[i];
-        if (val === null || val === undefined) {
-          stringRow.push("");
-        } else {
-          stringRow.push(String(val));
-        }
+        stringRow.push(this.valueToString(row[i]));
       }
       stringRows.push(stringRow);
     }
@@ -198,8 +213,7 @@ export class DuckDBDataSource {
       const stringRow: string[] = [];
       const matchRow: boolean[] = [];
       for (let i = 0; i < this.headers.length; i++) {
-        const val = row[i];
-        stringRow.push(val === null || val === undefined ? "" : String(val));
+        stringRow.push(this.valueToString(row[i]));
       }
       for (let i = 0; i < this.headers.length; i++) {
         matchRow.push(Boolean(row[this.headers.length + i]));
@@ -315,7 +329,7 @@ export class DuckDBDataSource {
       const stringRow: string[] = [];
       const matchRow: boolean[] = [];
       for (let i = 0; i < this.headers.length; i++) {
-        stringRow.push(row[i] === null || row[i] === undefined ? "" : String(row[i]));
+        stringRow.push(this.valueToString(row[i]));
       }
       for (let i = 0; i < this.headers.length; i++) {
         matchRow.push(Boolean(row[this.headers.length + i]));
@@ -359,50 +373,135 @@ export class DuckDBDataSource {
     return this.filePath;
   }
 
+  getQuery(): string {
+    return this.originalQuery || `FROM '${this.filePath}'`;
+  }
+
+  async runQuery(sql: string): Promise<void> {
+    if (!this.conn) throw new Error("Not connected");
+
+    this.isMaterialized = false;
+
+    // Create a new view with the query
+    await this.conn.run(`CREATE OR REPLACE VIEW ${this.tableName} AS ${sql}`);
+    this.originalQuery = sql;
+
+    // Update headers
+    const result = await this.conn.run(`SELECT * FROM ${this.tableName} LIMIT 0`);
+    this.headers = result.columnNames().filter((h) => h !== this.rowIdCol);
+
+    // Update total rows
+    const countResult = await this.conn.run(`SELECT COUNT(*) as count FROM ${this.tableName}`);
+    const countRows = await countResult.getRows();
+    const countVal = countRows[0] ? countRows[0][0] : 0;
+    this.totalRows = Number(countVal);
+
+    // Re-materialize
+    await this.materialize();
+  }
+
+
   async renameColumn(oldName: string, newName: string): Promise<void> {
-    if (!this.conn || !this.filePath) throw new Error("Not connected or no file path");
-    if (!this.filePath.endsWith(".parquet")) {
-      throw new Error("Column rename only supported for parquet files");
-    }
+    if (!this.conn) throw new Error("Not connected");
+    if (!this.isMaterialized) throw new Error("Cannot rename before materialization");
 
-    const { copyFileSync } = await import("fs");
-    const { basename } = await import("path");
+    const materializedName = `${this.tableName}_materialized`;
 
-    // Backup original file to /tmp
-    const backupPath = `/tmp/${basename(this.filePath)}.${Date.now()}.bak`;
-    copyFileSync(this.filePath, backupPath);
-    console.log(`Backed up ${this.filePath} to ${backupPath}`);
-
-    // Build SELECT with renamed column
-    const selectCols = this.headers.map((h) => {
-      if (h === oldName) {
-        return `${this.quoteIdent(h)} AS ${this.quoteIdent(newName)}`;
-      }
-      return this.quoteIdent(h);
-    });
-
-    // Write to temp file first, then replace original
-    const tempOut = `/tmp/${basename(this.filePath)}.tmp.parquet`;
+    // Rename in materialized table
     await this.conn.run(
-      `COPY (SELECT ${selectCols.join(", ")} FROM ${this.tableName}) TO '${tempOut}' (FORMAT PARQUET)`
+      `ALTER TABLE ${materializedName} RENAME COLUMN ${this.quoteIdent(oldName)} TO ${this.quoteIdent(newName)}`
     );
-
-    // Replace original with renamed version
-    const { renameSync } = await import("fs");
-    renameSync(tempOut, this.filePath);
+    // Update view
+    await this.conn.run(`CREATE OR REPLACE VIEW ${this.tableName} AS SELECT * FROM ${materializedName}`);
 
     // Update internal headers
     this.headers = this.headers.map((h) => (h === oldName ? newName : h));
+  }
 
-    // Recreate view with new schema
-    await this.conn.run(`CREATE OR REPLACE VIEW ${this.tableName} AS SELECT * FROM '${this.filePath}'`);
+  async deleteColumn(colName: string): Promise<void> {
+    if (!this.conn) throw new Error("Not connected");
+    if (!this.isMaterialized) throw new Error("Cannot delete column before materialization");
+    if (this.headers.length <= 1) throw new Error("Cannot delete last column");
 
-    // Re-materialize if needed
-    if (this.isMaterialized) {
-      const materializedName = `${this.tableName}_materialized`;
-      await this.conn.run(`DROP TABLE IF EXISTS ${materializedName}`);
-      await this.conn.run(`CREATE TABLE ${materializedName} AS SELECT * FROM ${this.tableName}`);
-      await this.conn.run(`CREATE OR REPLACE VIEW ${this.tableName} AS SELECT * FROM ${materializedName}`);
+    const materializedName = `${this.tableName}_materialized`;
+
+    await this.conn.run(
+      `ALTER TABLE ${materializedName} DROP COLUMN ${this.quoteIdent(colName)}`
+    );
+    await this.conn.run(`CREATE OR REPLACE VIEW ${this.tableName} AS SELECT * FROM ${materializedName}`);
+
+    this.headers = this.headers.filter((h) => h !== colName);
+  }
+
+  async saveToFile(outPath: string): Promise<void> {
+    if (!this.conn) throw new Error("Not connected");
+    if (!this.isMaterialized) throw new Error("Cannot save before materialization");
+
+    const materializedName = `${this.tableName}_materialized`;
+    const ext = outPath.match(/\.[^.]+$/)?.[0]?.toLowerCase() || "";
+
+    if (ext === ".parquet") {
+      await this.conn.run(`COPY ${materializedName} TO '${outPath}' (FORMAT PARQUET)`);
+    } else if (ext === ".csv") {
+      await this.conn.run(`COPY ${materializedName} TO '${outPath}' (FORMAT CSV, HEADER)`);
+    } else if (ext === ".json") {
+      await this.conn.run(`COPY ${materializedName} TO '${outPath}' (FORMAT JSON, ARRAY TRUE)`);
+    } else {
+      throw new Error(`Unsupported format: ${ext}`);
+    }
+
+    console.log(`Saved to ${outPath}`);
+  }
+
+  suggestSavePath(): string {
+    // Try filePath first
+    if (this.filePath && /\.(parquet|csv|json|tsv)$/i.test(this.filePath)) {
+      const ext = this.filePath.match(/\.(parquet|csv|json|tsv)$/i)![0];
+      const base = this.filePath.slice(0, -ext.length);
+      return `${base}.edited${ext}`;
+    }
+
+    // Try to extract from query
+    const query = this.originalQuery || this.filePath || "";
+    const match = query.match(/['"]([^'"]+\.(parquet|csv|json|tsv))['"]/i);
+    if (match) {
+      const path = match[1];
+      const ext = "." + match[2];
+      const base = path.slice(0, -ext.length);
+      return `${base}.edited${ext}`;
+    }
+
+    return "output.parquet";
+  }
+
+  /**
+   * Get autocomplete suggestions using DuckDB's sql_auto_complete function
+   */
+  async getAutocompleteSuggestions(sql: string): Promise<{ suggestion: string; suggestionStart: number }[]> {
+    if (!this.conn) return [];
+
+    try {
+      // Install and load autocomplete extension once
+      if (!this.autocompleteLoaded) {
+        await this.conn.run("INSTALL autocomplete");
+        await this.conn.run("LOAD autocomplete");
+        this.autocompleteLoaded = true;
+      }
+
+      // Escape single quotes in the SQL for the function call
+      const escapedSql = sql.replace(/'/g, "''");
+      const result = await this.conn.run(
+        `SELECT suggestion, suggestion_start FROM sql_auto_complete('${escapedSql}')`
+      );
+      const rows = await result.getRows();
+
+      return rows.map((row) => ({
+        suggestion: String(row[0]),
+        suggestionStart: Number(row[1]),
+      }));
+    } catch (err) {
+      // Autocomplete may fail for incomplete queries - that's fine
+      return [];
     }
   }
 }

@@ -14,7 +14,7 @@
     "typescript": "^5"
   },
   "dependencies": {
-    "@duckdb/node-api": "^1.4.3-r.1",
+    "@duckdb/node-api": "1.5.0-r.1",
     "@opentui/core": "^0.1.61",
     "@opentui/react": "^0.1.61",
     "@types/blessed": "^0.1.27",

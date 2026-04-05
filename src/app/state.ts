@@ -2,7 +2,18 @@ import type { State, SelectionMode } from "src/types";
 import type { Action } from "src/app/actions";
 import { copyToClipboard, formatRowAsCsv } from "src/utils/clipboard";
 
-export function initialState(): State & { lastRequestId: number; counter: number; renameActive: boolean; renameQuery: string } {
+type ExtendedState = State & {
+  lastRequestId: number;
+  counter: number;
+  renameActive: boolean;
+  renameQuery: string;
+  savePathPromptActive: boolean;
+  savePathQuery: string;
+  queryEditorActive: boolean;
+  queryEditorValue: string;
+};
+
+export function initialState(): ExtendedState {
   return {
     rowsOffset: 0,
     colsOffset: 0,
@@ -31,13 +42,14 @@ export function initialState(): State & { lastRequestId: number; counter: number
     counter: 0,
     renameActive: false,
     renameQuery: "",
+    savePathPromptActive: false,
+    savePathQuery: "",
+    queryEditorActive: false,
+    queryEditorValue: "",
   };
 }
 
-export function reducer(
-  state: State & { lastRequestId: number; counter: number; renameActive: boolean; renameQuery: string },
-  action: Action,
-): State & { lastRequestId: number; counter: number; renameActive: boolean; renameQuery: string } {
+export function reducer(state: ExtendedState, action: Action): ExtendedState {
   switch (action.type) {
     case "INC_COUNTER":
       return { ...state, counter: state.counter + 1 };
@@ -288,6 +300,24 @@ export function reducer(
       return { ...state, renameActive: false, renameQuery: "" };
     case "SET_RENAME_QUERY":
       return { ...state, renameQuery: action.query };
+    case "PROMPT_SAVE_PATH":
+      return {
+        ...state,
+        savePathPromptActive: true,
+        savePathQuery: action.defaultPath || "",
+      };
+    case "SET_SAVE_PATH_QUERY":
+      return { ...state, savePathQuery: action.query };
+    case "EXIT_SAVE_PATH_PROMPT":
+      return { ...state, savePathPromptActive: false, savePathQuery: "" };
+    case "OPEN_QUERY_EDITOR":
+      return { ...state, queryEditorActive: true, queryEditorValue: action.query };
+    case "SET_QUERY_EDITOR_VALUE":
+      return { ...state, queryEditorValue: action.query };
+    case "CLOSE_QUERY_EDITOR":
+      return { ...state, queryEditorActive: false };
+    case "SET_VISIBLE_ROWS":
+      return { ...state, visibleRows: action.rows };
     default:
       return state;
   }

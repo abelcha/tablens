@@ -22,6 +22,8 @@ import { SearchBar } from "src/app/components/SearchBar";
 import { StatusLine } from "src/app/components/StatusLine";
 import { EmptyState } from "src/app/components/EmptyState";
 import { RenameBar } from "src/app/components/RenameBar";
+import { SavePathBar } from "src/app/components/SavePathBar";
+import { QueryEditor } from "src/app/components/QueryEditor";
 import { parseInlineMarkup } from "src/app/markup";
 
 declare module "@opentui/react" {
@@ -63,6 +65,7 @@ export function TablensApp({
       });
   }, [renderer]);
 
+  const queryEditorRef = useRef<any>(null);
   const lastRenderedOffset = useRef(-1);
   const lastRenderedQuery = useRef("");
   const lastRenderedUseRegex = useRef(false);
@@ -110,6 +113,10 @@ export function TablensApp({
     sorter,
     renameActive,
     renameQuery,
+    savePathPromptActive,
+    savePathQuery,
+    queryEditorActive,
+    queryEditorValue,
   } = state;
 
   // Poll for materialization status until complete
@@ -202,6 +209,7 @@ export function TablensApp({
         dispatch({ type: "EXIT_RENAME_COLUMN" });
         return;
       }
+
       setRenaming(true);
       source
         .renameColumn(oldName, newName.trim())
@@ -211,9 +219,92 @@ export function TablensApp({
         })
         .catch((err) => {
           console.error("Rename failed:", err);
+          dispatch({ type: "EXIT_RENAME_COLUMN" });
         })
         .finally(() => {
           setRenaming(false);
+        });
+    },
+    [source],
+  );
+
+  const [saving, setSaving] = useState(false);
+  const [executingQuery, setExecutingQuery] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const performDeleteColumn = useCallback(
+    (colName: string) => {
+      if (headers.length <= 1) return;
+
+      setDeleting(true);
+      source
+        .deleteColumn(colName)
+        .then(() => {
+          dispatch({ type: "SET_HEADERS", headers: source.getHeaders() });
+          // Adjust cursor if we deleted the rightmost column
+          if (cursorCol >= source.getHeaders().length) {
+            dispatch({ type: "MOVE_LEFT" });
+          }
+          // Force viewport refresh
+          lastRenderedOffset.current = -1;
+        })
+        .catch((err) => {
+          console.error("Delete column failed:", err);
+        })
+        .finally(() => {
+          setDeleting(false);
+        });
+    },
+    [source, headers.length, cursorCol],
+  );
+
+  const handleQuerySubmit = useCallback((sql: string) => {
+    if (!sql.trim()) {
+      dispatch({ type: "CLOSE_QUERY_EDITOR" });
+      return;
+    }
+    setExecutingQuery(true);
+    // Clear old data immediately
+    dispatch({ type: "SET_VISIBLE_ROWS", rows: [] });
+    dispatch({ type: "SET_HEADERS", headers: [] });
+    source
+      .runQuery(sql.trim())
+      .then(() => {
+        dispatch({ type: "SET_HEADERS", headers: source.getHeaders() });
+        dispatch({ type: "SET_TOTAL_ROW_COUNT", count: source.getTotalRows() });
+        dispatch({ type: "SET_MATERIALIZED", isMaterialized: false });
+        dispatch({ type: "CLOSE_QUERY_EDITOR" });
+        // Reset viewport to top
+        dispatch({ type: "MOVE_UP", pageSize: 999999 });
+        // Reset lastRendered refs to force re-fetch
+        lastRenderedOffset.current = -1;
+      })
+      .catch((err) => {
+        console.error("Query failed:", err);
+      })
+      .finally(() => {
+        setExecutingQuery(false);
+      });
+  }, [source]);
+
+  const handleSavePathSubmit = useCallback(
+    (path: string) => {
+      if (!path.trim()) {
+        dispatch({ type: "EXIT_SAVE_PATH_PROMPT" });
+        return;
+      }
+      setSaving(true);
+      source
+        .saveToFile(path.trim())
+        .then(() => {
+          dispatch({ type: "EXIT_SAVE_PATH_PROMPT" });
+        })
+        .catch((err) => {
+          console.error("Save failed:", err);
+          dispatch({ type: "EXIT_SAVE_PATH_PROMPT" });
+        })
+        .finally(() => {
+          setSaving(false);
         });
     },
     [source],
@@ -467,6 +558,72 @@ export function TablensApp({
         dispatch({ type: "EXIT_RENAME_COLUMN" });
         return;
       }
+      if (key.name === "return") {
+        const oldName = headers[cursorCol];
+        if (oldName) performRename(oldName, state.renameQuery);
+        return;
+      }
+      return;
+    }
+
+    if (savePathPromptActive) {
+      if (key.name === "escape") {
+        dispatch({ type: "EXIT_SAVE_PATH_PROMPT" });
+        return;
+      }
+      if (key.name === "return") {
+        handleSavePathSubmit(savePathQuery);
+        return;
+      }
+      return;
+    }
+
+    if (queryEditorActive) {
+      const autocomplete = (queryEditorRef.current as any)?.autocomplete;
+
+      if (key.name === "escape") {
+        if (autocomplete?.isVisible) {
+          autocomplete.dismiss();
+        } else {
+          dispatch({ type: "CLOSE_QUERY_EDITOR" });
+        }
+        return;
+      }
+      if (key.name === "tab") {
+        if (autocomplete?.isVisible) {
+          // Tab cycles through autocomplete suggestions
+          if (key.shift) {
+            autocomplete.selectPrev();
+          } else {
+            autocomplete.selectNext();
+          }
+        } else {
+          // Tab triggers autocomplete when not visible
+          autocomplete?.trigger?.();
+        }
+        return;
+      }
+      if ((key.name === "down" || key.name === "up") && autocomplete?.isVisible) {
+        // Arrow keys for autocomplete navigation
+        if (key.name === "down") {
+          autocomplete.selectNext();
+        } else {
+          autocomplete.selectPrev();
+        }
+        return;
+      }
+      if (key.name === "return" && !key.shift) {
+        if (autocomplete?.isVisible) {
+          // Confirm autocomplete selection
+          autocomplete.confirm();
+          return;
+        }
+        // Enter without shift = run query
+        const text = queryEditorRef.current?.getText?.() || "";
+        handleQuerySubmit(text);
+        return;
+      }
+      // Let textarea handle other keys (including Shift+Enter for newline)
       return;
     }
 
@@ -495,6 +652,30 @@ export function TablensApp({
 
     if (key.name === "e" && state.selectionMode === "column") {
       dispatch({ type: "ENTER_RENAME_COLUMN" });
+      return;
+    }
+
+    if (key.name === "d" && state.selectionMode === "column") {
+      const colName = headers[cursorCol];
+      if (colName && !deleting) {
+        performDeleteColumn(colName);
+      }
+      return;
+    }
+
+    if (key.name === "s") {
+      dispatch({
+        type: "PROMPT_SAVE_PATH",
+        defaultPath: source.suggestSavePath(),
+      });
+      return;
+    }
+
+    if (key.raw === ":") {
+      dispatch({
+        type: "OPEN_QUERY_EDITOR",
+        query: source.getQuery(),
+      });
       return;
     }
 
@@ -598,7 +779,16 @@ export function TablensApp({
         width="100%"
         height={1}
       >
-        {renameActive ? (
+        {savePathPromptActive ? (
+          <SavePathBar
+            query={savePathQuery}
+            onInput={(value) =>
+              dispatch({ type: "SET_SAVE_PATH_QUERY", query: value })
+            }
+            onSubmit={handleSavePathSubmit}
+            saving={saving}
+          />
+        ) : renameActive ? (
           <RenameBar
             query={renameQuery}
             onInput={(value) =>
@@ -662,6 +852,16 @@ export function TablensApp({
           />
         )}
       </box>
+      {queryEditorActive && (
+        <QueryEditor
+          ref={queryEditorRef}
+          initialQuery={queryEditorValue}
+          onSubmit={handleQuerySubmit}
+          loading={executingQuery}
+          termHeight={renderer.terminalHeight}
+          getAutocompleteSuggestions={(sql) => source.getAutocompleteSuggestions(sql)}
+        />
+      )}
     </>
   );
 }
