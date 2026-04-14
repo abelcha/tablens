@@ -31,4 +31,6 @@ export interface State {
   totalRowCount: number;
   headers: string[];
   isMaterialized: boolean;
+  showTypes: boolean;
+  columnTypes: string[];
 }

@@ -468,6 +468,8 @@ export function TablensApp({
       totalRowCount,
       selectionMode: state.selectionMode,
       cursorCol: state.cursorCol,
+      showTypes: state.showTypes,
+      columnTypes: state.columnTypes,
     });
   }, [
     headers,
@@ -480,6 +482,8 @@ export function TablensApp({
     columnOverrides,
     state.selectionMode,
     state.cursorCol,
+    state.showTypes,
+    state.columnTypes,
     renderer.terminalWidth,
     renderer.terminalHeight,
     renderer.console.visible,
@@ -668,6 +672,18 @@ export function TablensApp({
         type: "PROMPT_SAVE_PATH",
         defaultPath: source.suggestSavePath(),
       });
+      return;
+    }
+
+    if (key.name === "t") {
+      if (!state.showTypes && state.columnTypes.length === 0) {
+        source.getColumnTypes().then((types) => {
+          dispatch({ type: "SET_COLUMN_TYPES", types });
+          dispatch({ type: "TOGGLE_SHOW_TYPES" });
+        });
+      } else {
+        dispatch({ type: "TOGGLE_SHOW_TYPES" });
+      }
       return;
     }
 

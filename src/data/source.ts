@@ -35,12 +35,46 @@ export class DuckDBDataSource {
     return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
 
+  private formatComplex(val: unknown): string {
+    if (val === null || val === undefined) return "null";
+    if (typeof val === "bigint") return val.toString();
+    if (val instanceof Date) return val.toISOString().split("T")[0];
+    if (typeof val === "string") return `"${val}"`;
+    if (typeof val === "number" || typeof val === "boolean") return String(val);
+    if (typeof val !== "object") return String(val);
+    const obj = val as Record<string, unknown>;
+    // DuckDB Date32 → {days: number}
+    if ("days" in obj && typeof obj.days === "number" && Object.keys(obj).length === 1) {
+      const date = new Date(obj.days * 24 * 60 * 60 * 1000);
+      return date.toISOString().split("T")[0];
+    }
+    // DuckDB STRUCT → {entries: Record<string, DuckDBValue>}
+    if ("entries" in obj && obj.entries && typeof obj.entries === "object" && !Array.isArray(obj.entries)) {
+      const entries = obj.entries as Record<string, unknown>;
+      const parts = Object.entries(entries).map(([k, v]) => `${k}: ${this.formatComplex(v)}`);
+      return `{${parts.join(", ")}}`;
+    }
+    // DuckDB LIST → {items: DuckDBValue[]}
+    if ("items" in obj && Array.isArray(obj.items)) {
+      return `[${(obj.items as unknown[]).map((v) => this.formatComplex(v)).join(", ")}]`;
+    }
+    // DuckDB MAP → {entries: [{key, value}, ...]}
+    if ("entries" in obj && Array.isArray(obj.entries)) {
+      const parts = (obj.entries as { key: unknown; value: unknown }[]).map(
+        (e) => `${this.formatComplex(e.key)}: ${this.formatComplex(e.value)}`
+      );
+      return `{${parts.join(", ")}}`;
+    }
+    // Plain object fallback
+    if (Array.isArray(val)) return `[${val.map((v) => this.formatComplex(v)).join(", ")}]`;
+    const parts = Object.entries(obj).map(([k, v]) => `${k}: ${this.formatComplex(v)}`);
+    return `{${parts.join(", ")}}`;
+  }
+
   private valueToString(val: unknown): string {
     if (val === null || val === undefined) return "";
     if (typeof val === "bigint") return val.toString();
-    if (val instanceof Date) {
-      return val.toISOString().split("T")[0]; // YYYY-MM-DD
-    }
+    if (val instanceof Date) return val.toISOString().split("T")[0];
     if (typeof val === "object") {
       const obj = val as Record<string, unknown>;
       // DuckDB Date32 returns {days: number} - convert to ISO date
@@ -48,11 +82,7 @@ export class DuckDBDataSource {
         const date = new Date(obj.days * 24 * 60 * 60 * 1000);
         return date.toISOString().split("T")[0];
       }
-      return JSON.stringify(val, (_, v) => {
-        if (typeof v === "bigint") return v.toString();
-        if (v instanceof Date) return v.toISOString().split("T")[0];
-        return v;
-      });
+      return this.formatComplex(val);
     }
     return String(val);
   }
@@ -147,6 +177,17 @@ export class DuckDBDataSource {
 
   getHeaders(): string[] {
     return this.headers;
+  }
+
+  async getColumnTypes(): Promise<string[]> {
+    if (!this.conn) return [];
+    const result = await this.conn.run(`DESCRIBE ${this.tableName}`);
+    const rows = await result.getRows();
+    const typeMap = new Map<string, string>();
+    for (const row of rows) {
+      typeMap.set(String(row[0]), String(row[1]));
+    }
+    return this.headers.map((h) => typeMap.get(h) || "");
   }
 
   getTotalRows(): number {

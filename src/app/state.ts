@@ -11,6 +11,8 @@ type ExtendedState = State & {
   savePathQuery: string;
   queryEditorActive: boolean;
   queryEditorValue: string;
+  showTypes: boolean;
+  columnTypes: string[];
 };
 
 export function initialState(): ExtendedState {
@@ -46,6 +48,8 @@ export function initialState(): ExtendedState {
     savePathQuery: "",
     queryEditorActive: false,
     queryEditorValue: "",
+    showTypes: false,
+    columnTypes: [],
   };
 }
 
@@ -187,7 +191,7 @@ export function reducer(state: ExtendedState, action: Action): ExtendedState {
       };
     }
     case "SET_HEADERS":
-      return { ...state, headers: action.headers };
+      return { ...state, headers: action.headers, columnTypes: [] };
     case "APPLY_VIEWPORT_PATCH":
       // Only apply if it's the latest request
       if (action.requestId >= state.lastRequestId) {
@@ -318,6 +322,10 @@ export function reducer(state: ExtendedState, action: Action): ExtendedState {
       return { ...state, queryEditorActive: false };
     case "SET_VISIBLE_ROWS":
       return { ...state, visibleRows: action.rows };
+    case "TOGGLE_SHOW_TYPES":
+      return { ...state, showTypes: !state.showTypes };
+    case "SET_COLUMN_TYPES":
+      return { ...state, columnTypes: action.types };
     default:
       return state;
   }
