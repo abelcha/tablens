@@ -34,6 +34,8 @@ export type Action =
   | { type: "SET_VISIBLE_ROWS"; rows: string[][] }
   | { type: "TOGGLE_SHOW_TYPES" }
   | { type: "SET_COLUMN_TYPES"; types: string[] }
+  | { type: "TOGGLE_SHOW_STATS" }
+  | { type: "SET_COLUMN_STATS"; stats: string[] }
   | {
     type: "YANK";
     selectionMode: "cell" | "row" | "column";

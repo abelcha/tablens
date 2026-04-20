@@ -33,4 +33,6 @@ export interface State {
   isMaterialized: boolean;
   showTypes: boolean;
   columnTypes: string[];
+  showStats: boolean;
+  columnStats: string[];
 }

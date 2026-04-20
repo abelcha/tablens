@@ -19,6 +19,7 @@ export class DuckDBDataSource {
   private editedFilePath: string | null = null;
   private originalQuery: string | null = null;
   private autocompleteLoaded: boolean = false;
+  private preUnnestQuery: string | null = null;
 
   constructor() { }
 
@@ -35,6 +36,23 @@ export class DuckDBDataSource {
     return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
 
+  private formatDecimal(obj: Record<string, unknown>): string {
+    const scale = Number(obj.scale);
+    const value = obj.value as bigint | number;
+    const str = typeof value === "bigint" ? value.toString() : String(value);
+    if (!scale) return str;
+    const neg = str.startsWith("-");
+    const digits = neg ? str.slice(1) : str;
+    const padded = digits.padStart(scale + 1, "0");
+    const intPart = padded.slice(0, -scale);
+    const fracPart = padded.slice(-scale);
+    return `${neg ? "-" : ""}${intPart}.${fracPart}`;
+  }
+
+  private isDecimal(obj: Record<string, unknown>): boolean {
+    return "width" in obj && "scale" in obj && "value" in obj;
+  }
+
   private formatComplex(val: unknown): string {
     if (val === null || val === undefined) return "null";
     if (typeof val === "bigint") return val.toString();
@@ -43,6 +61,8 @@ export class DuckDBDataSource {
     if (typeof val === "number" || typeof val === "boolean") return String(val);
     if (typeof val !== "object") return String(val);
     const obj = val as Record<string, unknown>;
+    // DuckDB DECIMAL → {width, scale, value}
+    if (this.isDecimal(obj)) return this.formatDecimal(obj);
     // DuckDB Date32 → {days: number}
     if ("days" in obj && typeof obj.days === "number" && Object.keys(obj).length === 1) {
       const date = new Date(obj.days * 24 * 60 * 60 * 1000);
@@ -77,6 +97,8 @@ export class DuckDBDataSource {
     if (val instanceof Date) return val.toISOString().split("T")[0];
     if (typeof val === "object") {
       const obj = val as Record<string, unknown>;
+      // DuckDB DECIMAL → {width, scale, value}
+      if (this.isDecimal(obj)) return this.formatDecimal(obj);
       // DuckDB Date32 returns {days: number} - convert to ISO date
       if ("days" in obj && typeof obj.days === "number" && Object.keys(obj).length === 1) {
         const date = new Date(obj.days * 24 * 60 * 60 * 1000);
@@ -143,7 +165,29 @@ export class DuckDBDataSource {
     // would force a full scan of the dataset.
     await this.conn.run(`CREATE OR REPLACE VIEW ${this.tableName} AS ${sql}`);
 
-    // Get headers
+    // Get headers and detect unsupported types (GEOMETRY, etc.)
+    const descResult = await this.conn.run(`DESCRIBE ${this.tableName}`);
+    const descRows = await descResult.getRows();
+    const unsupportedCols = new Set<string>();
+    for (const row of descRows) {
+      const colName = String(row[0]);
+      const colType = String(row[1]).toUpperCase();
+      if (colType.includes("GEOMETRY") || colType === "WKB_BLOB" || colType.startsWith("UNKNOWN")) {
+        unsupportedCols.add(colName);
+      }
+    }
+    // Rebuild view with unsupported columns cast to a short hash
+    if (unsupportedCols.size > 0) {
+      const cols = descRows.map((row) => {
+        const name = String(row[0]);
+        if (unsupportedCols.has(name)) {
+          return `CAST(${this.quoteIdent(name)} AS VARCHAR) AS ${this.quoteIdent(name)}`;
+        }
+        return this.quoteIdent(name);
+      });
+      await this.conn.run(`CREATE OR REPLACE VIEW ${this.tableName} AS SELECT ${cols.join(", ")} FROM (${sql})`);
+    }
+
     const result = await this.conn.run(`SELECT * FROM ${this.tableName} LIMIT 0`);
     this.headers = result.columnNames().filter((h) => h !== this.rowIdCol);
 
@@ -188,6 +232,35 @@ export class DuckDBDataSource {
       typeMap.set(String(row[0]), String(row[1]));
     }
     return this.headers.map((h) => typeMap.get(h) || "");
+  }
+
+  async getColumnStats(): Promise<string[]> {
+    if (!this.conn) return [];
+    const result = await this.conn.run(`SUMMARIZE ${this.tableName}`);
+    const rows = await result.getRows();
+    // columns: column_name(0), column_type(1), min(2), max(3), approx_unique(4),
+    //          avg(5), std(6), q25(7), q50(8), q75(9), count(10), null_percentage(11)
+    const statsMap = new Map<string, string>();
+    for (const row of rows) {
+      const name = String(row[0]);
+      const approxUnique = Number(row[4]);
+      const nullPct = parseFloat(String(row[11]));
+      const uniqueStr = this.compactNumber(approxUnique);
+      let stat = `d${uniqueStr}`;
+      if (nullPct > 0) {
+        const pctStr = nullPct < 1 ? "<1" : Math.round(nullPct).toString();
+        stat += ` ∅${pctStr}%`;
+      }
+      statsMap.set(name, stat);
+    }
+    return this.headers.map((h) => statsMap.get(h) || "");
+  }
+
+  private compactNumber(n: number): string {
+    if (n >= 1_000_000_000) return (n / 1_000_000_000).toFixed(1).replace(/\.0$/, "") + "b";
+    if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, "") + "m";
+    if (n >= 1_000) return (n / 1_000).toFixed(1).replace(/\.0$/, "") + "k";
+    return n.toString();
   }
 
   getTotalRows(): number {
@@ -457,6 +530,127 @@ export class DuckDBDataSource {
 
     // Update internal headers
     this.headers = this.headers.map((h) => (h === oldName ? newName : h));
+  }
+
+  hasUnnestHistory(): boolean {
+    return this.preUnnestQuery !== null;
+  }
+
+  async resetUnnest(): Promise<void> {
+    if (!this.preUnnestQuery || !this.conn) return;
+    const query = this.preUnnestQuery;
+    this.preUnnestQuery = null;
+    await this.runQuery(query);
+  }
+
+  // Parse top-level field names from a STRUCT type string like "STRUCT(age INTEGER, city VARCHAR)"
+  private parseStructFields(typeStr: string): string[] {
+    // Extract the content inside STRUCT(...)
+    const match = typeStr.match(/^STRUCT\((.+)\)$/i);
+    if (!match) return [];
+    const inner = match[1];
+    if (!inner) return [];
+    // Walk through, splitting on commas at depth 0 (skip quoted strings)
+    const fields: string[] = [];
+    let depth = 0;
+    let start = 0;
+    let inQuote = false;
+    for (let i = 0; i < inner.length; i++) {
+      if (inner[i] === '"') { inQuote = !inQuote; continue; }
+      if (inQuote) continue;
+      if (inner[i] === "(" || inner[i] === "[") depth++;
+      else if (inner[i] === ")" || inner[i] === "]") depth--;
+      else if (inner[i] === "," && depth === 0) {
+        fields.push(inner.substring(start, i).trim().split(/\s+/)[0]);
+        start = i + 1;
+      }
+    }
+    fields.push(inner.substring(start).trim().split(/\s+/)[0]);
+    // Strip surrounding quotes from field names (DuckDB quotes reserved words like "value")
+    return fields.map((f) => f.replace(/^"(.*)"$/, "$1"));
+  }
+
+  async unnestColumn(colName: string): Promise<{ newColCount: number }> {
+    if (!this.conn) throw new Error("Not connected");
+
+    // Save the pre-unnest query on first unnest so Shift+U can restore it
+    if (!this.preUnnestQuery) {
+      this.preUnnestQuery = this.originalQuery || `SELECT * FROM '${this.filePath}'`;
+    }
+
+    const col = this.quoteIdent(colName);
+    const materializedName = `${this.tableName}_materialized`;
+    const sourceTable = this.isMaterialized ? materializedName : this.tableName;
+
+    // Get the column type to decide unnest strategy
+    const descResult = await this.conn.run(`DESCRIBE ${sourceTable}`);
+    const descRows = await descResult.getRows();
+    let colType = "";
+    for (const row of descRows) {
+      if (String(row[0]) === colName) {
+        colType = String(row[1]);
+        break;
+      }
+    }
+
+    const isStruct = colType.toUpperCase().startsWith("STRUCT");
+    const tmpName = `__unnest_tmp`;
+
+    if (isStruct) {
+      // Parse struct field names from type string
+      const fields = this.parseStructFields(colType);
+
+      // Build SELECT with unnested fields in place, prefixed with parent name
+      const selectParts: string[] = [];
+      for (const h of this.headers) {
+        if (h === colName) {
+          for (const field of fields) {
+            selectParts.push(`${col}.${this.quoteIdent(field)} AS ${this.quoteIdent(`${colName}.${field}`)}`);
+          }
+        } else {
+          selectParts.push(this.quoteIdent(h));
+        }
+      }
+      const selectSql = `SELECT ${selectParts.join(", ")} FROM ${sourceTable}`;
+
+      await this.conn.run(`CREATE OR REPLACE TABLE ${tmpName} AS ${selectSql}`);
+      await this.conn.run(`DROP TABLE IF EXISTS ${materializedName}`);
+      await this.conn.run(`ALTER TABLE ${tmpName} RENAME TO ${materializedName}`);
+      await this.conn.run(`CREATE OR REPLACE VIEW ${this.tableName} AS SELECT * FROM ${materializedName}`);
+
+      this.isMaterialized = true;
+
+      const result = await this.conn.run(`SELECT * FROM ${this.tableName} LIMIT 0`);
+      this.headers = result.columnNames().filter((h) => h !== this.rowIdCol);
+
+      const countResult = await this.conn.run(`SELECT COUNT(*) as count FROM ${this.tableName}`);
+      const countRows = await countResult.getRows();
+      this.totalRows = Number(countRows[0] ? countRows[0][0] : 0);
+
+      return { newColCount: fields.length };
+    } else {
+      // List/Array: column stays in place, rows expand
+      const selectParts = this.headers.map((h) =>
+        h === colName ? `UNNEST(${col}) AS ${col}` : this.quoteIdent(h)
+      );
+      const selectSql = `SELECT ${selectParts.join(", ")} FROM ${sourceTable}`;
+
+      await this.conn.run(`CREATE OR REPLACE TABLE ${tmpName} AS ${selectSql}`);
+      await this.conn.run(`DROP TABLE IF EXISTS ${materializedName}`);
+      await this.conn.run(`ALTER TABLE ${tmpName} RENAME TO ${materializedName}`);
+      await this.conn.run(`CREATE OR REPLACE VIEW ${this.tableName} AS SELECT * FROM ${materializedName}`);
+
+      this.isMaterialized = true;
+
+      const result = await this.conn.run(`SELECT * FROM ${this.tableName} LIMIT 0`);
+      this.headers = result.columnNames().filter((h) => h !== this.rowIdCol);
+
+      const countResult = await this.conn.run(`SELECT COUNT(*) as count FROM ${this.tableName}`);
+      const countRows = await countResult.getRows();
+      this.totalRows = Number(countRows[0] ? countRows[0][0] : 0);
+
+      return { newColCount: 1 };
+    }
   }
 
   async deleteColumn(colName: string): Promise<void> {

@@ -185,6 +185,53 @@ export function buildTypeLine(
   return line + "\n";
 }
 
+export function buildStatsLine(
+  stats: string[],
+  widths: number[],
+  gutterWidth: number = 0,
+) {
+  let line = "";
+  if (gutterWidth > 0) {
+    line += " ".repeat(gutterWidth + 2);
+  }
+  stats.forEach((s, i) => {
+    const width = widths[i] || 0;
+    const usableWidth = Math.max(0, width - NUM_SPACES_BETWEEN_COLUMNS);
+    // Split into distinct part and null part
+    const nullIdx = s.indexOf(" ∅");
+    const distinctPart = nullIdx >= 0 ? s.substring(0, nullIdx) : s;
+    const nullPart = nullIdx >= 0 ? s.substring(nullIdx + 1) : "";
+
+    if (usableWidth <= 0) {
+      line += " ".repeat(width);
+      return;
+    }
+
+    let leftText = distinctPart;
+    let rightText = nullPart;
+
+    // Truncate if needed
+    if (leftText.length + (rightText.length ? 1 + rightText.length : 0) > usableWidth) {
+      if (rightText && usableWidth > rightText.length + 2) {
+        leftText = leftText.substring(0, usableWidth - rightText.length - 2) + "…";
+      } else {
+        leftText = leftText.substring(0, usableWidth - 1) + "…";
+        rightText = "";
+      }
+    }
+
+    const gap = Math.max(rightText ? 1 : 0, usableWidth - leftText.length - rightText.length);
+    const leftPad = " ".repeat(LEFT_PADDING);
+    const cellContent = `{mutedCyan}${escapeMarkup(leftText)}{/mutedCyan}` +
+      " ".repeat(gap) +
+      (rightText ? `{mutedYellow}${escapeMarkup(rightText)}{/mutedYellow}` : "");
+    const totalLen = leftText.length + gap + rightText.length;
+    const rightPad = " ".repeat(Math.max(0, width - totalLen - LEFT_PADDING));
+    line += leftPad + cellContent + rightPad;
+  });
+  return line + "\n";
+}
+
 export function buildSeparatorLine(widths: number[], gutterWidth: number = 0, maxWidth?: number) {
   if (widths.length === 0) {
     const gutter = gutterWidth > 0 ? "─".repeat(gutterWidth) + "┬" : "";
@@ -260,10 +307,13 @@ export function buildRowLine(
     const rightPad = " ".repeat(Math.max(0, width - text.length - LEFT_PADDING));
     const isMatch = Boolean(matches?.[colIdx]);
     const isJson = text.length > 0 && (text[0] === "{" || text[0] === "[");
+    const isNumeric = text.length > 0 && /^-?\d+(\.\d+)?$/.test(text);
     if (isMatch) {
       line += leftPad + `{yellow}{underline}${escapeMarkup(text)}{/underline}{/yellow}` + rightPad;
     } else if (isJson) {
       line += leftPad + colorizeJson(text) + rightPad;
+    } else if (isNumeric) {
+      line += leftPad + `{jsonNumberConsole}${escapeMarkup(text)}{/jsonNumberConsole}` + rightPad;
     } else {
       line += leftPad + `{lightgray}${escapeMarkup(text)}{/lightgray}` + rightPad;
     }

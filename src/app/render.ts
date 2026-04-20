@@ -4,6 +4,7 @@ import { computeColumnWidths, computeRowHeights } from "src/layout/calculator";
 import {
   buildHeaderLine,
   buildTypeLine,
+  buildStatsLine,
   buildSeparatorLine,
   buildBottomSeparatorLine,
   buildRowLine,
@@ -34,6 +35,8 @@ export function computeTableContentModel(args: {
   cursorCol?: number;
   showTypes?: boolean;
   columnTypes?: string[];
+  showStats?: boolean;
+  columnStats?: string[];
 }): TableContentModel {
   const {
     headers,
@@ -50,6 +53,8 @@ export function computeTableContentModel(args: {
     cursorCol,
     showTypes,
     columnTypes,
+    showStats,
+    columnStats,
   } = args;
 
   // Calculate gutter width based on estimated max visible row
@@ -92,7 +97,8 @@ export function computeTableContentModel(args: {
   let curH = 0,
     visCount = 0;
   const typeLineHeight = showTypes && columnTypes?.length ? 1 : 0;
-  const availableRowHeight = termH - 4 - typeLineHeight; // blank line + header + (type line?) + separator + bottom separator
+  const statsLineHeight = showStats && columnStats?.length ? 1 : 0;
+  const availableRowHeight = termH - 4 - typeLineHeight - statsLineHeight;
   for (const h of rowHeights) {
     if (curH + h > availableRowHeight && visCount > 0) break;
     curH += h;
@@ -125,12 +131,16 @@ export function computeTableContentModel(args: {
   const dispTypes = showTypes && columnTypes?.length
     ? columnTypes.slice(colsOffset, colsOffset + visibleColCount)
     : null;
+  const dispStats = showStats && columnStats?.length
+    ? columnStats.slice(colsOffset, colsOffset + visibleColCount)
+    : null;
 
   const content = parseInlineMarkup(
     // "\n" + // Blank line at the top
     buildSeparatorLine(colWidths, 0, maxTableWidth + gutterWidth + dataPadding) +
     buildHeaderLine(dispHeaders, colWidths, gutterWidth, validSelectedColIdx, true) +
     (dispTypes ? buildTypeLine(dispTypes, colWidths, gutterWidth) : "") +
+    (dispStats ? buildStatsLine(dispStats, colWidths, gutterWidth) : "") +
     buildSeparatorLine(colWidths, gutterWidth, termW) +
     visRows
       .map((r, i) => {
@@ -155,13 +165,14 @@ export function computeCursorOverlay(args: {
   visCount: number;
 }) {
   const { state, colWidths, rowHeights, gutterWidth, termH, visCount } = args;
-  const { cursorRow, cursorCol, rowsOffset, colsOffset, selectionMode, showTypes, columnTypes } = state;
+  const { cursorRow, cursorCol, rowsOffset, colsOffset, selectionMode, showTypes, columnTypes, showStats, columnStats } = state;
 
   const relR = cursorRow - rowsOffset;
   const relC = cursorCol - colsOffset;
   const dataOffset = gutterWidth + 2; // "│ "
   const typeLineHeight = showTypes && columnTypes?.length ? 1 : 0;
-  const headerHeight = 3 + typeLineHeight; // blank line + header + (type line?) + separator
+  const statsLineHeight = showStats && columnStats?.length ? 1 : 0;
+  const headerHeight = 3 + typeLineHeight + statsLineHeight;
 
   // Clamp to visible range to prevent flicker during scroll
   // When at/past last row, keep at second-to-last; when before first, keep at first

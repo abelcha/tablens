@@ -35,6 +35,7 @@ export function parseInlineMarkup(text: string): StyledText {
     jsonKey: "#88C0D0",    // light blue for keys
     jsonString: "#A3BE8C", // green for string values
     jsonNumber: "#B48EAD", // purple for numbers
+    jsonNumberConsole: "#EBC06D", // node console.log yellow for numbers
     jsonBool: "#D08770",   // orange for booleans
     jsonNull: "#888888",   // gray for null
     jsonBracket: "#ECEFF4", // white for brackets/braces

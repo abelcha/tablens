@@ -231,6 +231,30 @@ export function TablensApp({
   const [saving, setSaving] = useState(false);
   const [executingQuery, setExecutingQuery] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [unnesting, setUnnesting] = useState(false);
+
+  const performUnnest = useCallback(
+    (colName: string) => {
+      setUnnesting(true);
+      dispatch({ type: "SET_VISIBLE_ROWS", rows: [] });
+      source
+        .unnestColumn(colName)
+        .then(() => {
+          dispatch({ type: "SET_HEADERS", headers: source.getHeaders() });
+          dispatch({ type: "SET_TOTAL_ROW_COUNT", count: source.getTotalRows() });
+          dispatch({ type: "SET_MATERIALIZED", isMaterialized: true });
+          // Keep cursor on same column — don't reset position
+          lastRenderedOffset.current = -1;
+        })
+        .catch((err) => {
+          console.error("Unnest failed:", err);
+        })
+        .finally(() => {
+          setUnnesting(false);
+        });
+    },
+    [source],
+  );
 
   const performDeleteColumn = useCallback(
     (colName: string) => {
@@ -470,6 +494,8 @@ export function TablensApp({
       cursorCol: state.cursorCol,
       showTypes: state.showTypes,
       columnTypes: state.columnTypes,
+      showStats: state.showStats,
+      columnStats: state.columnStats,
     });
   }, [
     headers,
@@ -484,6 +510,8 @@ export function TablensApp({
     state.cursorCol,
     state.showTypes,
     state.columnTypes,
+    state.showStats,
+    state.columnStats,
     renderer.terminalWidth,
     renderer.terminalHeight,
     renderer.console.visible,
@@ -659,6 +687,33 @@ export function TablensApp({
       return;
     }
 
+    if ((key.name === "U" || (key.name === "u" && key.shift)) && state.selectionMode === "column") {
+      if (source.hasUnnestHistory() && !unnesting) {
+        setUnnesting(true);
+        dispatch({ type: "SET_VISIBLE_ROWS", rows: [] });
+        source.resetUnnest().then(() => {
+          dispatch({ type: "SET_HEADERS", headers: source.getHeaders() });
+          dispatch({ type: "SET_TOTAL_ROW_COUNT", count: source.getTotalRows() });
+          dispatch({ type: "SET_MATERIALIZED", isMaterialized: false });
+          dispatch({ type: "MOVE_UP", pageSize: 999999 });
+          lastRenderedOffset.current = -1;
+        }).catch((err) => {
+          console.error("Reset unnest failed:", err);
+        }).finally(() => {
+          setUnnesting(false);
+        });
+      }
+      return;
+    }
+
+    if (key.name === "u" && state.selectionMode === "column") {
+      const colName = headers[cursorCol];
+      if (colName && !unnesting) {
+        performUnnest(colName);
+      }
+      return;
+    }
+
     if (key.name === "d" && state.selectionMode === "column") {
       const colName = headers[cursorCol];
       if (colName && !deleting) {
@@ -683,6 +738,18 @@ export function TablensApp({
         });
       } else {
         dispatch({ type: "TOGGLE_SHOW_TYPES" });
+      }
+      return;
+    }
+
+    if (key.name === "i") {
+      if (!state.showStats && state.columnStats.length === 0) {
+        source.getColumnStats().then((stats) => {
+          dispatch({ type: "SET_COLUMN_STATS", stats });
+          dispatch({ type: "TOGGLE_SHOW_STATS" });
+        });
+      } else {
+        dispatch({ type: "TOGGLE_SHOW_STATS" });
       }
       return;
     }
