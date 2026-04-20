@@ -86,6 +86,18 @@ export function computeTableContentModel(args: {
   }
 
   const colWidths = fullColWidths.slice(0, visibleColCount);
+  // If there's leftover space after the last full column, try to fit a partial
+  // next column (truncated) so the row fills the available width instead of
+  // leaving a trailing gap.
+  const MIN_PARTIAL_WIDTH = 6;
+  const remaining = tableW - usedWidth;
+  if (remaining >= MIN_PARTIAL_WIDTH && visibleColCount < fullColWidths.length) {
+    colWidths.push(remaining);
+    visibleColCount++;
+  } else if (remaining > 0 && colWidths.length > 0) {
+    // No next column to show — extend last visible column to fill the gap
+    colWidths[colWidths.length - 1]! += remaining;
+  }
   const dispHeaders = headers.slice(colsOffset, colsOffset + visibleColCount);
 
   const rowHeights = computeRowHeights(
