@@ -37,6 +37,7 @@ export function computeTableContentModel(args: {
   columnTypes?: string[];
   showStats?: boolean;
   columnStats?: string[];
+  columnCompaction?: boolean;
 }): TableContentModel {
   const {
     headers,
@@ -55,6 +56,7 @@ export function computeTableContentModel(args: {
     columnTypes,
     showStats,
     columnStats,
+    columnCompaction,
   } = args;
 
   // Calculate gutter width based on estimated max visible row
@@ -150,7 +152,7 @@ export function computeTableContentModel(args: {
   const content = parseInlineMarkup(
     // "\n" + // Blank line at the top
     buildSeparatorLine(colWidths, 0, maxTableWidth + gutterWidth + dataPadding) +
-    buildHeaderLine(dispHeaders, colWidths, gutterWidth, validSelectedColIdx, true) +
+    buildHeaderLine(dispHeaders, colWidths, gutterWidth, validSelectedColIdx, true, columnCompaction ?? false) +
     (dispTypes ? buildTypeLine(dispTypes, colWidths, gutterWidth) : "") +
     (dispStats ? buildStatsLine(dispStats, colWidths, gutterWidth) : "") +
     buildSeparatorLine(colWidths, gutterWidth, termW) +

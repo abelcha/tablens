@@ -44,4 +44,6 @@ export type Action =
     visibleRows: string[][];
     headers: string[];
     rowsOffset: number;
-  };
+  }
+  | { type: "TOGGLE_HELP" }
+  | { type: "TOGGLE_COLUMN_COMPACTION" };

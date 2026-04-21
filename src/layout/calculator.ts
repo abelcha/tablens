@@ -53,8 +53,11 @@ export function computeColumnWidths(
       return Math.max(headers[i]?.length || 0, MIN_COLUMN_WIDTH);
     }
     const sorted = [...widths].sort((a, b) => a - b);
+    const p50 = percentile(sorted, 0.5);
     const p90 = percentile(sorted, 0.9);
-    return Math.max(p90, MIN_COLUMN_WIDTH);
+    // Use p50 as base; only use p90 if data varies widely (p90 > 2x p50)
+    const useMedian = p90 <= p50 * 2;
+    return Math.max(useMedian ? p50 : p90, MIN_COLUMN_WIDTH);
   });
 
   const maxSingleColumnWidth = Math.floor(tableWidth * MAX_COLUMN_WIDTH_FRACTION);

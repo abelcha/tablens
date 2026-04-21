@@ -14,6 +14,9 @@ export function keyToActions(key: KeyEvent, ctx: { pageSize: number }): Action[]
     case "/":
       actions.push({ type: "ENTER_SEARCH" });
       break;
+    case "?":
+      actions.push({ type: "TOGGLE_HELP" });
+      break;
     case "up":
     case "Up":
     case "k":
@@ -42,7 +45,11 @@ export function keyToActions(key: KeyEvent, ctx: { pageSize: number }): Action[]
       break;
     case "left":
     case "h":
-      actions.push({ type: "MOVE_LEFT" });
+      if (key.shift || key.name === "H") {
+        actions.push({ type: "TOGGLE_HELP" });
+      } else {
+        actions.push({ type: "MOVE_LEFT" });
+      }
       break;
     case "right":
     case "l":
@@ -58,7 +65,7 @@ export function keyToActions(key: KeyEvent, ctx: { pageSize: number }): Action[]
       actions.push({ type: "CYCLE_SELECTION_MODE" });
       break;
     case "c":
-      actions.push({ type: "INC_COUNTER" });
+      actions.push({ type: "TOGGLE_COLUMN_COMPACTION" });
       break;
     case ">":
     case ".":

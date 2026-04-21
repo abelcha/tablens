@@ -35,4 +35,6 @@ export interface State {
   columnTypes: string[];
   showStats: boolean;
   columnStats: string[];
+  showHelp: boolean;
+  columnCompaction: boolean;
 }

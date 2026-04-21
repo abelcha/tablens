@@ -24,6 +24,7 @@ import { EmptyState } from "src/app/components/EmptyState";
 import { RenameBar } from "src/app/components/RenameBar";
 import { SavePathBar } from "src/app/components/SavePathBar";
 import { QueryEditor } from "src/app/components/QueryEditor";
+import { HelpModal } from "src/app/components/HelpModal";
 import { parseInlineMarkup } from "src/app/markup";
 
 declare module "@opentui/react" {
@@ -496,6 +497,7 @@ export function TablensApp({
       columnTypes: state.columnTypes,
       showStats: state.showStats,
       columnStats: state.columnStats,
+      columnCompaction: state.columnCompaction,
     });
   }, [
     headers,
@@ -512,6 +514,7 @@ export function TablensApp({
     state.columnTypes,
     state.showStats,
     state.columnStats,
+    state.columnCompaction,
     renderer.terminalWidth,
     renderer.terminalHeight,
     renderer.console.visible,
@@ -563,6 +566,11 @@ export function TablensApp({
       return;
     }
     if (renderer.console.visible) return;
+
+    if (state.showHelp) {
+      dispatch({ type: "TOGGLE_HELP" });
+      return;
+    }
 
     if (key.option && key.name === "r") {
       dispatch({ type: "TOGGLE_SEARCH_REGEX" });
@@ -945,6 +953,7 @@ export function TablensApp({
           getAutocompleteSuggestions={(sql) => source.getAutocompleteSuggestions(sql)}
         />
       )}
+      {state.showHelp && <HelpModal />}
     </>
   );
 }

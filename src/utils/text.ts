@@ -130,6 +130,7 @@ export function buildHeaderLine(
   gutterWidth: number = 0,
   selectedColIdx?: number,
   hideSelected: boolean = false,
+  compact: boolean = false,
 ) {
   let line = "";
   if (gutterWidth > 0) {
@@ -145,8 +146,8 @@ export function buildHeaderLine(
       return;
     }
 
-    let text = h;
-    if (h.length > usableWidth) {
+    let text = compact ? h.replace(/\s+/g, " ") : h;
+    if (text.length > usableWidth) {
       text = text.substring(0, usableWidth - 1) + "…";
     }
     const leftPad = " ".repeat(LEFT_PADDING);

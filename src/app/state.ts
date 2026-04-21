@@ -54,6 +54,8 @@ export function initialState(): ExtendedState {
     columnTypes: [],
     showStats: false,
     columnStats: [],
+    showHelp: false,
+    columnCompaction: false,
   };
 }
 
@@ -334,6 +336,10 @@ export function reducer(state: ExtendedState, action: Action): ExtendedState {
       return { ...state, showStats: !state.showStats };
     case "SET_COLUMN_STATS":
       return { ...state, columnStats: action.stats };
+    case "TOGGLE_HELP":
+      return { ...state, showHelp: !state.showHelp };
+    case "TOGGLE_COLUMN_COMPACTION":
+      return { ...state, columnCompaction: !state.columnCompaction };
     default:
       return state;
   }
