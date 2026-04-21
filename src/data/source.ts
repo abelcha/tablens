@@ -68,6 +68,13 @@ export class DuckDBDataSource {
       const date = new Date(obj.days * 24 * 60 * 60 * 1000);
       return date.toISOString().split("T")[0];
     }
+    // DuckDB TIMESTAMP → {micros: number|bigint}
+    if ("micros" in obj && Object.keys(obj).length === 1) {
+      const micros = typeof obj.micros === "bigint" ? obj.micros : BigInt(obj.micros as number);
+      const ms = Number(micros / 1000n);
+      const date = new Date(ms);
+      return date.toISOString().replace("T", " ").replace(/\.000Z$/, "").replace(/Z$/, "");
+    }
     // DuckDB STRUCT → {entries: Record<string, DuckDBValue>}
     if ("entries" in obj && obj.entries && typeof obj.entries === "object" && !Array.isArray(obj.entries)) {
       const entries = obj.entries as Record<string, unknown>;
@@ -97,12 +104,16 @@ export class DuckDBDataSource {
     if (val instanceof Date) return val.toISOString().split("T")[0];
     if (typeof val === "object") {
       const obj = val as Record<string, unknown>;
-      // DuckDB DECIMAL → {width, scale, value}
       if (this.isDecimal(obj)) return this.formatDecimal(obj);
-      // DuckDB Date32 returns {days: number} - convert to ISO date
       if ("days" in obj && typeof obj.days === "number" && Object.keys(obj).length === 1) {
         const date = new Date(obj.days * 24 * 60 * 60 * 1000);
         return date.toISOString().split("T")[0];
+      }
+      if ("micros" in obj && Object.keys(obj).length === 1) {
+        const micros = typeof obj.micros === "bigint" ? obj.micros : BigInt(obj.micros as number);
+        const ms = Number(micros / 1000n);
+        const date = new Date(ms);
+        return date.toISOString().replace("T", " ").replace(/\.000Z$/, "").replace(/Z$/, "");
       }
       return this.formatComplex(val);
     }

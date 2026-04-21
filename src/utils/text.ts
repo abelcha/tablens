@@ -309,10 +309,13 @@ export function buildRowLine(
     const isMatch = Boolean(matches?.[colIdx]);
     const isJson = text.length > 0 && (text[0] === "{" || text[0] === "[");
     const isNumeric = text.length > 0 && /^-?\d+(\.\d+)?$/.test(text);
+    const isDate = /^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}(:\d{2})?)?$/.test(text);
     if (isMatch) {
       line += leftPad + `{yellow}{underline}${escapeMarkup(text)}{/underline}{/yellow}` + rightPad;
     } else if (isJson) {
       line += leftPad + colorizeJson(text) + rightPad;
+    } else if (isDate) {
+      line += leftPad + `{dateValue}${escapeMarkup(text)}{/dateValue}` + rightPad;
     } else if (isNumeric) {
       line += leftPad + `{jsonNumberConsole}${escapeMarkup(text)}{/jsonNumberConsole}` + rightPad;
     } else {
