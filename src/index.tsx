@@ -19,6 +19,7 @@ import {
 import { initialState, reducer } from "src/app/state";
 import { computeViewportPatch } from "src/app/viewport";
 import { SearchBar } from "src/app/components/SearchBar";
+import { ColSearchBar } from "src/app/components/ColSearchBar";
 import { StatusLine } from "src/app/components/StatusLine";
 import { EmptyState } from "src/app/components/EmptyState";
 import { RenameBar } from "src/app/components/RenameBar";
@@ -469,6 +470,13 @@ export function TablensApp({
     performSearch,
   ]);
 
+  const colSearchQuery = state.colSearchQuery;
+  const filteredColIndices = useMemo(() => {
+    if (!colSearchQuery) return null;
+    const q = colSearchQuery.toLowerCase();
+    return headers.map((h, i) => ({ h, i })).filter(({ h }) => h.toLowerCase().includes(q)).map(({ i }) => i);
+  }, [headers, colSearchQuery]);
+
   const tableContent = useMemo(() => {
     if (headers.length === 0 || totalRowCount === 0 || visibleRows.length === 0)
       return null;
@@ -480,12 +488,26 @@ export function TablensApp({
         : 0;
     const tableH = Math.max(1, renderer.terminalHeight - 1 - consoleHeight);
 
+    const dispHeaders = filteredColIndices ? filteredColIndices.map((i) => headers[i]!) : headers;
+    const dispRows = filteredColIndices
+      ? visibleRows.map((r) => filteredColIndices.map((i) => r[i] ?? ""))
+      : visibleRows;
+    const dispMatches = filteredColIndices && visibleMatches
+      ? visibleMatches.map((m) => filteredColIndices.map((i) => m[i] ?? false))
+      : visibleMatches;
+    const dispTypes = filteredColIndices && state.columnTypes.length
+      ? filteredColIndices.map((i) => state.columnTypes[i] ?? "")
+      : state.columnTypes;
+    const dispStats = filteredColIndices && state.columnStats.length
+      ? filteredColIndices.map((i) => state.columnStats[i] ?? "")
+      : state.columnStats;
+
     return computeTableContentModel({
-      headers,
-      visibleRows,
-      visibleMatches,
+      headers: dispHeaders,
+      visibleRows: dispRows,
+      visibleMatches: dispMatches,
       rowsOffset,
-      colsOffset,
+      colsOffset: filteredColIndices ? 0 : colsOffset,
       wrapMode,
       columnOverrides,
       termW: tableW,
@@ -494,9 +516,9 @@ export function TablensApp({
       selectionMode: state.selectionMode,
       cursorCol: state.cursorCol,
       showTypes: state.showTypes,
-      columnTypes: state.columnTypes,
+      columnTypes: dispTypes,
       showStats: state.showStats,
-      columnStats: state.columnStats,
+      columnStats: dispStats,
       columnCompaction: state.columnCompaction,
     });
   }, [
@@ -515,6 +537,7 @@ export function TablensApp({
     state.showStats,
     state.columnStats,
     state.columnCompaction,
+    filteredColIndices,
     renderer.terminalWidth,
     renderer.terminalHeight,
     renderer.console.visible,
@@ -582,6 +605,14 @@ export function TablensApp({
     }
     if (key.option && key.name === "c") {
       dispatch({ type: "TOGGLE_SEARCH_CASE_SENSITIVE" });
+      return;
+    }
+
+    if (state.colSearchActive) {
+      if (key.name === "escape") {
+        dispatch({ type: "EXIT_COL_SEARCH" });
+        return;
+      }
       return;
     }
 
@@ -891,6 +922,15 @@ export function TablensApp({
             }}
             columnName={headers[cursorCol] || ""}
             saving={renaming}
+          />
+        ) : state.colSearchActive || colSearchQuery.length > 0 ? (
+          <ColSearchBar
+            query={colSearchQuery}
+            active={state.colSearchActive}
+            matchCount={filteredColIndices ? filteredColIndices.length : headers.length}
+            totalCols={headers.length}
+            onInput={(value) => dispatch({ type: "SET_COL_SEARCH_QUERY", query: value })}
+            onSubmit={() => dispatch({ type: "EXIT_COL_SEARCH" })}
           />
         ) : state.searchActive ||
         searchQuery.length > 0 ||

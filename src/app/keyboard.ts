@@ -14,6 +14,9 @@ export function keyToActions(key: KeyEvent, ctx: { pageSize: number }): Action[]
     case "/":
       actions.push({ type: "ENTER_SEARCH" });
       break;
+    case "\\":
+      actions.push({ type: "ENTER_COL_SEARCH" });
+      break;
     case "?":
       actions.push({ type: "TOGGLE_HELP" });
       break;

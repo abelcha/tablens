@@ -56,6 +56,8 @@ export function initialState(): ExtendedState {
     columnStats: [],
     showHelp: false,
     columnCompaction: false,
+    colSearchActive: false,
+    colSearchQuery: "",
   };
 }
 
@@ -340,6 +342,12 @@ export function reducer(state: ExtendedState, action: Action): ExtendedState {
       return { ...state, showHelp: !state.showHelp };
     case "TOGGLE_COLUMN_COMPACTION":
       return { ...state, columnCompaction: !state.columnCompaction };
+    case "ENTER_COL_SEARCH":
+      return { ...state, colSearchActive: true };
+    case "EXIT_COL_SEARCH":
+      return { ...state, colSearchActive: false, colSearchQuery: "" };
+    case "SET_COL_SEARCH_QUERY":
+      return { ...state, colSearchQuery: action.query };
     default:
       return state;
   }

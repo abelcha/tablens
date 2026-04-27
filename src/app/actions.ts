@@ -46,4 +46,7 @@ export type Action =
     rowsOffset: number;
   }
   | { type: "TOGGLE_HELP" }
-  | { type: "TOGGLE_COLUMN_COMPACTION" };
+  | { type: "TOGGLE_COLUMN_COMPACTION" }
+  | { type: "ENTER_COL_SEARCH" }
+  | { type: "EXIT_COL_SEARCH" }
+  | { type: "SET_COL_SEARCH_QUERY"; query: string };

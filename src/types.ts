@@ -37,4 +37,6 @@ export interface State {
   columnStats: string[];
   showHelp: boolean;
   columnCompaction: boolean;
+  colSearchActive: boolean;
+  colSearchQuery: string;
 }
