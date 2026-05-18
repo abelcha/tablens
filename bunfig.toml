@@ -1,0 +1,3 @@
+# Bun configuration
+# Bun should automatically read tsconfig.json paths, but if not,
+# we can configure them here using import maps
