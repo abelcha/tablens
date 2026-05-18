@@ -1,5 +1,10 @@
 import { DuckDBInstance, DuckDBConnection } from "@duckdb/node-api";
 
+type MaterializeMode = "always" | "never" | "auto" | "lazy";
+
+const MAX_AUTO_MATERIALIZE_BYTES = 400 * 1024 * 1024; // 400MB
+const MAX_AUTO_MATERIALIZE_ROWS = 10_000_000; // 10M rows
+
 export class DuckDBDataSource {
   private instance: DuckDBInstance | null = null;
   private conn: DuckDBConnection | null = null;
@@ -18,10 +23,16 @@ export class DuckDBDataSource {
   private filePath: string | null = null;
   private editedFilePath: string | null = null;
   private originalQuery: string | null = null;
+  private filterBaseQuery: string | null = null;
   private autocompleteLoaded: boolean = false;
   private preUnnestQuery: string | null = null;
+  private materializeMode: MaterializeMode;
+  private fileSize: number = 0;
+  private skippedMaterialization: boolean = false;
 
-  constructor() { }
+  constructor(materializeMode: MaterializeMode = "auto") {
+    this.materializeMode = materializeMode;
+  }
 
   private quoteIdent(ident: string): string {
     return `"${ident.replaceAll(`"`, `""`)}"`;
@@ -107,7 +118,7 @@ export class DuckDBDataSource {
       if (this.isDecimal(obj)) return this.formatDecimal(obj);
       if ("days" in obj && typeof obj.days === "number" && Object.keys(obj).length === 1) {
         const date = new Date(obj.days * 24 * 60 * 60 * 1000);
-        return date.toISOString().split("T")[0];
+        return date.toISOString().split("T")[0] || "";
       }
       if ("micros" in obj && Object.keys(obj).length === 1) {
         const micros = typeof obj.micros === "bigint" ? obj.micros : BigInt(obj.micros as number);
@@ -158,12 +169,18 @@ export class DuckDBDataSource {
     if (typeof args === "string") {
       this.filePath = args;
       sql = `SELECT * FROM '${args}'`;
+      // Get file size for materialization decision
+      this.fileSize = await this.getFileSize(args);
     } else {
       this.filePath = args.filePath || null;
       this.originalQuery = args.query || null;
       sql = args.query || `SELECT * FROM '${args.filePath}'`;
+      if (args.filePath) {
+        this.fileSize = await this.getFileSize(args.filePath);
+      }
     }
     sql = sql.replace('grid_mess_poids', 'import_cache.grid_mess_poids')
+    this.filterBaseQuery = sql;
 
     const [...statements] = sql.split(";");
     if (statements.length > 1) {
@@ -209,8 +226,13 @@ export class DuckDBDataSource {
     const countVal = countRows[0] ? countRows[0][0] : 0;
     this.totalRows = Number(countVal);
 
-    // Materialize into RAM table for fast scrolling/search
-    await this.materialize();
+    // Decide whether to materialize based on mode, file size, and row count
+    const shouldMaterialize = this.shouldMaterialize();
+    if (shouldMaterialize) {
+      await this.materialize();
+    } else {
+      this.skippedMaterialization = true;
+    }
   }
 
   private async materialize(): Promise<void> {
@@ -226,8 +248,37 @@ export class DuckDBDataSource {
     }
   }
 
+  private shouldMaterialize(): boolean {
+    if (this.materializeMode === "never") return false;
+    if (this.materializeMode === "always") return true;
+    if (this.materializeMode === "lazy") return false;
+    // auto mode
+    const underSizeLimit = this.fileSize < MAX_AUTO_MATERIALIZE_BYTES || this.fileSize === 0;
+    const underRowLimit = this.totalRows < MAX_AUTO_MATERIALIZE_ROWS;
+    return underSizeLimit && underRowLimit;
+  }
+
+  private async getFileSize(filePath: string): Promise<number> {
+    try {
+      const fs = await import("node:fs");
+      const stats = fs.statSync(filePath);
+      return stats.size;
+    } catch {
+      return 0;
+    }
+  }
+
   getIsMaterialized(): boolean {
     return this.isMaterialized;
+  }
+
+  getMaterializationInfo(): { isMaterialized: boolean; skipped: boolean; fileSize: number; totalRows: number } {
+    return {
+      isMaterialized: this.isMaterialized,
+      skipped: this.skippedMaterialization,
+      fileSize: this.fileSize,
+      totalRows: this.totalRows,
+    };
   }
 
   getHeaders(): string[] {
@@ -272,6 +323,49 @@ export class DuckDBDataSource {
     if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, "") + "m";
     if (n >= 1_000) return (n / 1_000).toFixed(1).replace(/\.0$/, "") + "k";
     return n.toString();
+  }
+
+  async getColumnValueDistribution(
+    columnIndex: number,
+    maxValues: number = 1000000
+  ): Promise<Array<{value: string; count: number; percent: number}> | null> {
+    if (!this.conn) return null;
+    const colName = this.headers[columnIndex];
+    if (!colName) return null;
+
+    const colIdent = this.quoteIdent(colName);
+    const baseQuery = this.getFilterBaseQuery();
+
+    try {
+      const sql = `
+        SELECT 
+          ${colIdent} as value,
+          COUNT(*) as count,
+          ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER (), 2) as percent
+        FROM (${baseQuery}) AS base
+        GROUP BY ${colIdent}
+        ORDER BY count DESC, value ASC
+        LIMIT ${maxValues}
+      `;
+      const result = await this.conn.run(sql);
+      const rows = await result.getRows();
+
+      return rows.map((row: any) => ({
+        value: row[0] === null ? "(null)" : String(row[0]),
+        count: Number(row[1]),
+        percent: Number(row[2] || 0)
+      }));
+    } catch (e) {
+      console.error("Value distribution failed:", e);
+      return [];
+    }
+  }
+
+  private getFilterBaseQuery(): string {
+    if (this.filterBaseQuery) return this.filterBaseQuery;
+    if (this.originalQuery) return this.originalQuery;
+    if (this.filePath) return `SELECT * FROM ${this.sqlStringLiteral(this.filePath)}`;
+    return `SELECT * FROM ${this.tableName}`;
   }
 
   getTotalRows(): number {
@@ -502,10 +596,54 @@ export class DuckDBDataSource {
     return this.originalQuery || `FROM '${this.filePath}'`;
   }
 
+  private getWrappedBaseQuery(): string {
+    const query = this.getFilterBaseQuery().trim().replace(/;+\s*$/, "");
+    if (query.length > 0) {
+      if (/^from\s+/i.test(query)) {
+        return `SELECT * ${query}`;
+      }
+      return query;
+    }
+
+    if (this.filePath) {
+      return `SELECT * FROM ${this.sqlStringLiteral(this.filePath)}`;
+    }
+
+    return `SELECT * FROM ${this.tableName}`;
+  }
+
+  async applyColumnFilter(column: string, values: string[]): Promise<void> {
+    if (!this.conn) throw new Error("Not connected");
+
+    const colIdent = this.quoteIdent(column);
+    const nonNullValues = values.filter((value) => value !== "(null)");
+    const hasNull = values.includes("(null)");
+    const parts: string[] = [];
+
+    if (nonNullValues.length > 0) {
+      parts.push(`${colIdent} IN (${nonNullValues.map((value) => this.sqlStringLiteral(value)).join(", ")})`);
+    }
+    if (hasNull) {
+      parts.push(`${colIdent} IS NULL`);
+    }
+
+    const predicate = parts.length > 1 ? `(${parts.join(" OR ")})` : parts[0] || "FALSE";
+    const baseQuery = this.getWrappedBaseQuery();
+
+    await this.replaceQuery(`SELECT * FROM (${baseQuery}) AS filtered WHERE ${predicate}`);
+  }
+
   async runQuery(sql: string): Promise<void> {
     if (!this.conn) throw new Error("Not connected");
 
     this.isMaterialized = false;
+    this.filterBaseQuery = sql;
+
+    await this.replaceQuery(sql);
+  }
+
+  private async replaceQuery(sql: string): Promise<void> {
+    if (!this.conn) throw new Error("Not connected");
 
     // Create a new view with the query
     await this.conn.run(`CREATE OR REPLACE VIEW ${this.tableName} AS ${sql}`);

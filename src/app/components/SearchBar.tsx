@@ -1,6 +1,20 @@
 /** @jsxImportSource @opentui/react */
-import React from "react";
 import { parseInlineMarkup } from "src/app/markup";
+
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))}${sizes[i]}`;
+}
+
+function formatNumber(n: number): string {
+  if (n >= 1_000_000_000) return (n / 1_000_000_000).toFixed(1).replace(/\.0$/, "") + "B";
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
+  if (n >= 1_000) return (n / 1_000).toFixed(1).replace(/\.0$/, "") + "K";
+  return String(n);
+}
 
 export function SearchBar({
   query,
@@ -18,6 +32,7 @@ export function SearchBar({
   loading,
   isMaterialized = false,
   sorting = false,
+  materializationInfo,
 }: {
   query: string;
   onInput: (value: string) => void;
@@ -34,12 +49,15 @@ export function SearchBar({
   loading?: boolean;
   isMaterialized?: boolean;
   sorting?: boolean;
+  materializationInfo?: { isMaterialized: boolean; skipped: boolean; fileSize: number; totalRows: number };
 }) {
   const ramIndicator = sorting
     ? "{yellow} ● Sorting... {/yellow}"
     : isMaterialized
       ? "{green} ● RAM {/green}"
-      : "{yellow} ○ initializing ... {/yellow}";
+      : materializationInfo?.skipped
+        ? `{grey} ○ streaming ${formatBytes(materializationInfo.fileSize)} / ${formatNumber(materializationInfo.totalRows)} rows{/grey}`
+        : "{yellow} ○ initializing ... {/yellow}";
   const countText =
     query.length === 0
       ? ""

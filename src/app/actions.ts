@@ -8,6 +8,7 @@ export type Action =
   | { type: "CYCLE_SELECTION_MODE" }
   | { type: "INC_COUNTER" }
   | { type: "SET_TOTAL_ROW_COUNT"; count: number }
+  | { type: "RESET_VIEWPORT"; preserveColumn?: boolean }
   | { type: "SET_HEADERS"; headers: string[] }
   | { type: "APPLY_VIEWPORT_PATCH"; patch: any; requestId: number }
   | { type: "RESIZE_COLUMN"; delta: number; currentWidth?: number }
@@ -47,6 +48,16 @@ export type Action =
   }
   | { type: "TOGGLE_HELP" }
   | { type: "TOGGLE_COLUMN_COMPACTION" }
-  | { type: "ENTER_COL_SEARCH" }
-  | { type: "EXIT_COL_SEARCH" }
-  | { type: "SET_COL_SEARCH_QUERY"; query: string };
+    | { type: "ENTER_COL_SEARCH" }
+    | { type: "EXIT_COL_SEARCH" }
+  | { type: "SET_COL_SEARCH_QUERY"; query: string }
+  | { type: "OPEN_COLUMN_FILTER" }
+  | { type: "CLOSE_COLUMN_FILTER" }
+  | { type: "SET_COLUMN_FILTER_DATA"; data: any }
+  | { type: "MOVE_FILTER_CURSOR"; delta: number; visibleCount: number }
+  | { type: "ENTER_COLUMN_FILTER_SEARCH" }
+  | { type: "EXIT_COLUMN_FILTER_SEARCH" }
+  | { type: "SET_COLUMN_FILTER_SEARCH_QUERY"; query: string }
+  | { type: "RESET_COLUMN_FILTER" }
+  | { type: "TOGGLE_COLUMN_FILTER_VALUE"; value: string }
+  | { type: "APPLY_COLUMN_FILTER"; value: string };

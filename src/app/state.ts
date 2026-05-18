@@ -58,6 +58,14 @@ export function initialState(): ExtendedState {
     columnCompaction: false,
     colSearchActive: false,
     colSearchQuery: "",
+    showColumnFilter: false,
+    columnFilterCol: null,
+    columnFilterData: null,
+    columnFilterCursor: 0,
+    columnFilterSelectedValues: [],
+    columnFilterSelectionsByCol: {},
+    columnFilterSearchActive: false,
+    columnFilterSearchQuery: "",
   };
 }
 
@@ -198,6 +206,14 @@ export function reducer(state: ExtendedState, action: Action): ExtendedState {
         rowsOffset: maxRows <= 0 ? 0 : Math.max(0, Math.min(maxRows - 1, state.rowsOffset)),
       };
     }
+    case "RESET_VIEWPORT":
+      return {
+        ...state,
+        rowsOffset: 0,
+        cursorRow: 0,
+        colsOffset: action.preserveColumn ? state.colsOffset : 0,
+        cursorCol: action.preserveColumn ? state.cursorCol : 0,
+      };
     case "SET_HEADERS":
       return { ...state, headers: action.headers, columnTypes: [], columnStats: [] };
     case "APPLY_VIEWPORT_PATCH":
@@ -348,6 +364,84 @@ export function reducer(state: ExtendedState, action: Action): ExtendedState {
       return { ...state, colSearchActive: false, colSearchQuery: "" };
     case "SET_COL_SEARCH_QUERY":
       return { ...state, colSearchQuery: action.query };
+    case "OPEN_COLUMN_FILTER": {
+      const openedCol = state.cursorCol;
+      return {
+        ...state,
+        showColumnFilter: true,
+        columnFilterCol: openedCol,
+        columnFilterData: null,
+        columnFilterCursor: 0,
+        columnFilterSelectedValues: state.columnFilterSelectionsByCol[openedCol]?.slice() || [],
+        columnFilterSearchActive: false,
+        columnFilterSearchQuery: "",
+      };
+    }
+    case "CLOSE_COLUMN_FILTER":
+      return { 
+        ...state, 
+        showColumnFilter: false, 
+        columnFilterData: null,
+        columnFilterCursor: 0,
+        columnFilterSearchActive: false,
+        columnFilterSearchQuery: "",
+      };
+    case "SET_COLUMN_FILTER_DATA":
+      return { ...state, columnFilterData: action.data };
+    case "MOVE_FILTER_CURSOR": {
+      if (!state.columnFilterData) return state;
+      const len = Math.max(0, action.visibleCount);
+      if (len === 0) return state;
+      let newCursor = state.columnFilterCursor + action.delta;
+      if (newCursor < 0) newCursor = 0;
+      if (newCursor >= len) newCursor = len - 1;
+      return { ...state, columnFilterCursor: newCursor };
+    }
+    case "ENTER_COLUMN_FILTER_SEARCH":
+      return { ...state, columnFilterSearchActive: true };
+    case "EXIT_COLUMN_FILTER_SEARCH":
+      return { ...state, columnFilterSearchActive: false };
+    case "SET_COLUMN_FILTER_SEARCH_QUERY":
+      return { ...state, columnFilterSearchQuery: action.query, columnFilterCursor: 0 };
+    case "RESET_COLUMN_FILTER": {
+      const colIdx = state.columnFilterCol;
+      return {
+        ...state,
+        columnFilterSearchActive: false,
+        columnFilterSearchQuery: "",
+        columnFilterSelectedValues: [],
+        columnFilterCursor: 0,
+        columnFilterSelectionsByCol:
+          colIdx === null
+            ? state.columnFilterSelectionsByCol
+            : {
+                ...state.columnFilterSelectionsByCol,
+                [colIdx]: [],
+              },
+      };
+    }
+    case "TOGGLE_COLUMN_FILTER_VALUE": {
+      const value = action.value;
+      const selected = state.columnFilterSelectedValues;
+      const exists = selected.includes(value);
+      const nextSelected = exists
+        ? selected.filter((v) => v !== value)
+        : [...selected, value];
+      const colIdx = state.columnFilterCol;
+      return {
+        ...state,
+        columnFilterSelectedValues: nextSelected,
+        columnFilterSelectionsByCol:
+          colIdx === null
+            ? state.columnFilterSelectionsByCol
+            : {
+                ...state.columnFilterSelectionsByCol,
+                [colIdx]: nextSelected,
+              },
+      };
+    }
+    case "APPLY_COLUMN_FILTER":
+      return { ...state, showColumnFilter: false };
     default:
       return state;
   }

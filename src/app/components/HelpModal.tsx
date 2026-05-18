@@ -9,11 +9,12 @@ export function HelpModal() {
 │ Tab      Cycle selection mode (row/col/cell)    │
 ├─ SEARCH & FILTER ────────────────────────────────┤
 │ /        Enter search mode                       │
+│ f        Column value filter (in column mode)    │
 │ c        Toggle column compaction (header text)  │
 ├─ UI ─────────────────────────────────────────────┤
 │ H or ?   Show/hide this help                     │
 │ t        Toggle column type display              │
-│ s        Toggle column stats display             │
+│ i        Toggle column stats display             │
 │ . or >   Resize column wider                     │
 │ , or <   Resize column narrower                  │
 ├─ SORTING ────────────────────────────────────────┤

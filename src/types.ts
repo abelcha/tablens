@@ -39,4 +39,12 @@ export interface State {
   columnCompaction: boolean;
   colSearchActive: boolean;
   colSearchQuery: string;
+  showColumnFilter: boolean;
+  columnFilterCol: number | null;
+  columnFilterData: Array<{value: string; count: number; percent: number}> | null;
+  columnFilterCursor: number;
+  columnFilterSelectedValues: string[];
+  columnFilterSelectionsByCol: Record<number, string[]>;
+  columnFilterSearchActive: boolean;
+  columnFilterSearchQuery: string;
 }

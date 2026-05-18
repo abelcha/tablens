@@ -26,6 +26,7 @@ import { RenameBar } from "src/app/components/RenameBar";
 import { SavePathBar } from "src/app/components/SavePathBar";
 import { QueryEditor } from "src/app/components/QueryEditor";
 import { HelpModal } from "src/app/components/HelpModal";
+import { ColumnFilterModal } from "src/app/components/ColumnFilterModal";
 import { parseInlineMarkup } from "src/app/markup";
 
 declare module "@opentui/react" {
@@ -54,6 +55,7 @@ export function TablensApp({
   const renderer = useRenderer();
   const [state, dispatch] = useReducer(reducer, initialState());
   const [terminalBgColor, setTerminalBgColor] = useState<string>("#1e1e1e");
+  const [materializationInfo, setMaterializationInfo] = useState<{ isMaterialized: boolean; skipped: boolean; fileSize: number; totalRows: number }>({ isMaterialized: false, skipped: false, fileSize: 0, totalRows: 0 });
 
   useEffect(() => {
     renderer
@@ -86,6 +88,7 @@ export function TablensApp({
         await source.connect({ filePath: file, query });
         dispatch({ type: "SET_HEADERS", headers: source.getHeaders() });
         dispatch({ type: "SET_TOTAL_ROW_COUNT", count: source.getTotalRows() });
+        setMaterializationInfo(source.getMaterializationInfo());
       } catch (err) {
         console.error("Failed to connect to source:", err);
       }
@@ -119,7 +122,46 @@ export function TablensApp({
     savePathQuery,
     queryEditorActive,
     queryEditorValue,
+    showColumnFilter,
+    columnFilterCol,
+    columnFilterData,
+    columnFilterCursor,
+    columnFilterSelectedValues,
+    columnFilterSearchActive,
+    columnFilterSearchQuery,
   } = state;
+
+  const filteredColumnFilterData = useMemo(() => {
+    if (!columnFilterData) return [];
+    const query = columnFilterSearchQuery.trim().toLowerCase();
+    if (!query) return columnFilterData;
+    return columnFilterData.filter((item) => item.value.toLowerCase().includes(query));
+  }, [columnFilterData, columnFilterSearchQuery]);
+
+  const columnFilterPageSize = 16;
+  const activeColumnFilterCursor = Math.max(
+    0,
+    Math.min(
+      filteredColumnFilterData.length - 1,
+      filteredColumnFilterData.length === 0 ? 0 : columnFilterCursor,
+    ),
+  );
+  const columnFilterWindowStart = useMemo(() => {
+    const len = filteredColumnFilterData.length;
+    if (len <= columnFilterPageSize) return 0;
+    const maxStart = Math.max(0, len - columnFilterPageSize);
+    const half = Math.floor(columnFilterPageSize / 2);
+    return Math.max(0, Math.min(maxStart, activeColumnFilterCursor - half));
+  }, [filteredColumnFilterData.length, activeColumnFilterCursor]);
+  const visibleColumnFilterData = useMemo(
+    () =>
+      filteredColumnFilterData.slice(
+        columnFilterWindowStart,
+        columnFilterWindowStart + columnFilterPageSize,
+      ),
+    [filteredColumnFilterData, columnFilterWindowStart],
+  );
+  const visibleColumnFilterCursor = activeColumnFilterCursor - columnFilterWindowStart;
 
   // Poll for materialization status until complete
   useEffect(() => {
@@ -129,6 +171,7 @@ export function TablensApp({
       const materialized = source.getIsMaterialized();
       if (materialized) {
         dispatch({ type: "SET_MATERIALIZED", isMaterialized: true });
+        setMaterializationInfo(source.getMaterializationInfo());
         clearInterval(interval);
       }
     }, 500);
@@ -284,6 +327,30 @@ export function TablensApp({
     [source, headers.length, cursorCol],
   );
 
+  const performColumnFilter = useCallback(
+    (columnName: string, values: string[]) => {
+      setExecutingQuery(true);
+      dispatch({ type: "SET_VISIBLE_ROWS", rows: [] });
+      source
+        .applyColumnFilter(columnName, values)
+        .then(() => {
+          dispatch({ type: "SET_HEADERS", headers: source.getHeaders() });
+          dispatch({ type: "SET_TOTAL_ROW_COUNT", count: source.getTotalRows() });
+          dispatch({ type: "SET_MATERIALIZED", isMaterialized: false });
+          dispatch({ type: "CLOSE_COLUMN_FILTER" });
+          dispatch({ type: "RESET_VIEWPORT", preserveColumn: true });
+          lastRenderedOffset.current = -1;
+        })
+        .catch((err) => {
+          console.error("Column filter failed:", err);
+        })
+        .finally(() => {
+          setExecutingQuery(false);
+        });
+    },
+    [source],
+  );
+
   const handleQuerySubmit = useCallback((sql: string) => {
     if (!sql.trim()) {
       dispatch({ type: "CLOSE_QUERY_EDITOR" });
@@ -301,7 +368,7 @@ export function TablensApp({
         dispatch({ type: "SET_MATERIALIZED", isMaterialized: false });
         dispatch({ type: "CLOSE_QUERY_EDITOR" });
         // Reset viewport to top
-        dispatch({ type: "MOVE_UP", pageSize: 999999 });
+        dispatch({ type: "RESET_VIEWPORT" });
         // Reset lastRendered refs to force re-fetch
         lastRenderedOffset.current = -1;
       })
@@ -595,6 +662,117 @@ export function TablensApp({
       return;
     }
 
+    if (state.showColumnFilter) {
+      if (columnFilterSearchActive) {
+        if (key.name === "up" || key.name === "k" || key.name === "K") {
+          dispatch({
+            type: "MOVE_FILTER_CURSOR",
+            delta: -1,
+            visibleCount: filteredColumnFilterData.length,
+          });
+          return;
+        }
+        if (key.name === "down" || key.name === "j" || key.name === "J") {
+          dispatch({
+            type: "MOVE_FILTER_CURSOR",
+            delta: 1,
+            visibleCount: filteredColumnFilterData.length,
+          });
+          return;
+        }
+        if (key.name === "return" || key.name === "enter") {
+          dispatch({ type: "EXIT_COLUMN_FILTER_SEARCH" });
+          return;
+        }
+        if (key.name === "escape") {
+          dispatch({ type: "EXIT_COLUMN_FILTER_SEARCH" });
+          return;
+        }
+        if (key.name === "backspace") {
+          dispatch({
+            type: "SET_COLUMN_FILTER_SEARCH_QUERY",
+            query: columnFilterSearchQuery.slice(0, -1),
+          });
+          return;
+        }
+        if (!key.ctrl && !key.meta && typeof key.raw === "string" && key.raw.length === 1) {
+          dispatch({
+            type: "SET_COLUMN_FILTER_SEARCH_QUERY",
+            query: `${columnFilterSearchQuery}${key.raw}`,
+          });
+          return;
+        }
+        return;
+      }
+      if (key.name === "escape" || key.name === "q") {
+        dispatch({ type: "CLOSE_COLUMN_FILTER" });
+        return;
+      }
+      if (key.name === "/") {
+        dispatch({ type: "ENTER_COLUMN_FILTER_SEARCH" });
+        return;
+      }
+      if (key.name === "r" || key.name === "R") {
+        dispatch({ type: "RESET_COLUMN_FILTER" });
+        return;
+      }
+      if (key.name === "up" || key.name === "k" || key.name === "K") {
+        dispatch({
+          type: "MOVE_FILTER_CURSOR",
+          delta: -1,
+          visibleCount: filteredColumnFilterData.length,
+        });
+        return;
+      }
+      if (key.name === "down" || key.name === "j" || key.name === "J") {
+        dispatch({
+          type: "MOVE_FILTER_CURSOR",
+          delta: 1,
+          visibleCount: filteredColumnFilterData.length,
+        });
+        return;
+      }
+      if (key.name === "pageup") {
+        dispatch({
+          type: "MOVE_FILTER_CURSOR",
+          delta: -columnFilterPageSize,
+          visibleCount: filteredColumnFilterData.length,
+        });
+        return;
+      }
+      if (key.name === "pagedown") {
+        dispatch({
+          type: "MOVE_FILTER_CURSOR",
+          delta: columnFilterPageSize,
+          visibleCount: filteredColumnFilterData.length,
+        });
+        return;
+      }
+      if (key.name === "space" || key.raw === " ") {
+        const selectedItem = filteredColumnFilterData[activeColumnFilterCursor];
+        if (selectedItem) {
+          dispatch({ type: "TOGGLE_COLUMN_FILTER_VALUE", value: selectedItem.value });
+        }
+        return;
+      }
+      if (key.name === "return" || key.name === "enter") {
+        const selectedValues = columnFilterSelectedValues;
+        const currentItem = filteredColumnFilterData[activeColumnFilterCursor];
+        const values =
+          selectedValues.length > 0
+            ? selectedValues
+            : currentItem
+              ? [currentItem.value]
+              : [];
+        const columnName = headers[columnFilterCol || 0];
+        if (columnName && values.length > 0) {
+          performColumnFilter(columnName, values);
+        }
+        return;
+      }
+      return;
+    }
+
     if (key.option && key.name === "r") {
       dispatch({ type: "TOGGLE_SEARCH_REGEX" });
       return;
@@ -793,6 +971,18 @@ export function TablensApp({
       return;
     }
 
+    if (key.name === "f" && state.selectionMode === "column") {
+      if (state.showColumnFilter) {
+        dispatch({ type: "CLOSE_COLUMN_FILTER" });
+      } else {
+        dispatch({ type: "OPEN_COLUMN_FILTER" });
+        source.getColumnValueDistribution(state.cursorCol).then((data) => {
+          dispatch({ type: "SET_COLUMN_FILTER_DATA", data: data || [] });
+        });
+      }
+      return;
+    }
+
     if (key.raw === ":") {
       dispatch({
         type: "OPEN_QUERY_EDITOR",
@@ -963,6 +1153,7 @@ export function TablensApp({
             loading={searchLoading}
             isMaterialized={isMaterialized}
             sorting={sorting}
+            materializationInfo={materializationInfo}
           />
         ) : (
           <StatusLine
@@ -980,6 +1171,7 @@ export function TablensApp({
             isMaterialized={isMaterialized}
             sorting={sorting}
             selectionMode={selectionMode}
+            materializationInfo={materializationInfo}
           />
         )}
       </box>
@@ -991,6 +1183,18 @@ export function TablensApp({
           loading={executingQuery}
           termHeight={renderer.terminalHeight}
           getAutocompleteSuggestions={(sql) => source.getAutocompleteSuggestions(sql)}
+        />
+      )}
+      {showColumnFilter && columnFilterData && (
+        <ColumnFilterModal
+          columnName={headers[columnFilterCol || 0] || "Column"}
+          data={visibleColumnFilterData}
+          cursor={visibleColumnFilterCursor}
+          selectedValues={columnFilterSelectedValues}
+          searchActive={columnFilterSearchActive}
+          searchQuery={columnFilterSearchQuery}
+          filteredCount={filteredColumnFilterData.length}
+          windowStart={columnFilterWindowStart}
         />
       )}
       {state.showHelp && <HelpModal />}

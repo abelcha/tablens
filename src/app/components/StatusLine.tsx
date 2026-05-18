@@ -1,6 +1,20 @@
 /** @jsxImportSource @opentui/react */
-import React from "react";
 import { parseInlineMarkup } from "src/app/markup";
+
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))}${sizes[i]}`;
+}
+
+function formatNumber(n: number): string {
+  if (n >= 1_000_000_000) return (n / 1_000_000_000).toFixed(1).replace(/\.0$/, "") + "B";
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
+  if (n >= 1_000) return (n / 1_000).toFixed(1).replace(/\.0$/, "") + "K";
+  return String(n);
+}
 
 export function StatusLine({
   file,
@@ -17,6 +31,7 @@ export function StatusLine({
   isMaterialized = false,
   sorting = false,
   selectionMode = "row",
+  materializationInfo,
 }: {
   file: string;
   cursorRow: number;
@@ -32,12 +47,15 @@ export function StatusLine({
   isMaterialized?: boolean;
   sorting?: boolean;
   selectionMode?: string;
+  materializationInfo?: { isMaterialized: boolean; skipped: boolean; fileSize: number; totalRows: number };
 }) {
   const ramIndicator = sorting
     ? "{yellow} ● Sorting... {/yellow}"
     : isMaterialized
       ? "{green} ● RAM {/green}"
-      : "{yellow} ○ initializing ... {/yellow}";
+      : materializationInfo?.skipped
+        ? `{grey} ○ streaming ${formatBytes(materializationInfo.fileSize)} / ${formatNumber(materializationInfo.totalRows)} rows{/grey}`
+        : "{yellow} ○ initializing ... {/yellow}";
 
   // csvlens format: medium.csv [Row 1/10000, Col 1/20]
   const filterLabel =
