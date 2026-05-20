@@ -488,6 +488,7 @@ export function TablensApp({
     // Fast path — no DuckDB; keeps rowsOffset and visibleRows in sync when still inside cache.
     const syncPatch = trySyncViewportPatch({
       state: viewportState,
+      termW: tableW,
       termH: tableH,
       lastRenderedQuery: lastRenderedQuery.current,
       lastRenderedUseRegex: lastRenderedUseRegex.current,

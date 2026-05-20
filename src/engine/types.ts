@@ -69,6 +69,10 @@ export type EngineSchema = {
   activeParquetPath: string;
 };
 
+/**
+ * Handle to a DuckDB table that stores **only** `file_row_number` for a view (filter/sort/search).
+ * Not a materialized copy of row data — see Engine.ts module doc before adding columns here.
+ */
 export type ViewHandle = {
   tableName: string;
   hash: string;
@@ -76,6 +80,7 @@ export type ViewHandle = {
   buildTimeMs?: number;
 };
 
+/** Window into a view; Engine resolves ids from ViewHandle then hydrates from parquet. */
 export type PageRequest = {
   view: ViewSpec;
   offset: number;

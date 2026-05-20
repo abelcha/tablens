@@ -26,6 +26,42 @@ import type {
   ViewSpec,
 } from "./types";
 
+/**
+ * ## Tablens storage model (read this before changing buildView / getPage)
+ *
+ * We deliberately do **NOT** materialize full row payloads into DuckDB indexed views.
+ *
+ * ### What we store per view (`buildView`)
+ * Only `file_row_number` — an integer row id from `read_parquet(..., file_row_number=true)`.
+ * The indexed table is a **filtered/sorted list of row ids**, not a copy of cell values.
+ *
+ * ### How we load a page (`getPage`)
+ * 1. `LIMIT/OFFSET` on the small indexed table (cheap: one integer column).
+ * 2. `JOIN read_parquet(...) USING (file_row_number)` to hydrate **just that window** of rows.
+ *
+ * DuckDB can scan parquet by row group; joining on `file_row_number` keeps IO proportional to the
+ * page size, not the whole file.
+ *
+ * ### Why NOT `CREATE TABLE indexed AS SELECT p.*` (materialize all columns)
+ * We tried this for scroll perf. On large files (e.g. multi‑GB parquet) it caused:
+ * - **Init regression**: `duckdb:3` jumped from ~milliseconds to **seconds** (full copy on open).
+ * - **Memory/disk blow-up**: duplicate of every column for every filtered row in the temp DB.
+ * - Marginal scroll win that does not justify destroying startup; scroll is handled in the UI layer
+ *   via `PageWindowCache` + `trySyncViewportPatch` instead.
+ *
+ * **Do not reintroduce full-row materialization** without measuring init on a large parquet and
+ * getting explicit product sign-off. Future LLMs/agents: if you see slow scroll, fix caching /
+ * viewport coalescing first — not `SELECT p.*` into indexed tables.
+ *
+ * ### `file_row_number=true` is required everywhere
+ * All parquet reads that participate in the join must use the same option so ids align with the
+ * indexed table. Breaking this breaks pagination silently (wrong rows) or kills the join plan.
+ *
+ * ### View cache (`viewCache`)
+ * `buildView` is keyed by filter/sort/search hash. Rebuild only when the view spec changes, not on
+ * every scroll. `getPage` always reuses the handle; it must stay a row-id index, not a data table.
+ */
+
 function stableStringify(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map((item) => stableStringify(item)).join(",")}]`;
@@ -107,6 +143,7 @@ export class Engine implements TablensEngine {
     }
   }
 
+  /** Parquet source with stable row ids — must match indexed table + getPage join (see module doc). */
   private getSourceSelectSql(): string {
     return `SELECT * FROM read_parquet(${this.sqlLiteral(this.activeParquetPath)}, file_row_number=true)`;
   }
@@ -381,6 +418,8 @@ export class Engine implements TablensEngine {
     this.sourceFingerprint = { activeParquetPath: this.activeParquetPath, fileSize };
     await this.loadSchema();
     this.currentViewSpec = { sort: [], filter: {}, search: null };
+    // Startup cost is mostly this row-id index (fast). Materializing SELECT p.* here took seconds
+    // on large parquet — see module doc. Console label is often duckdb:3 on first open.
     await this.buildView(this.currentViewSpec);
     return this.getSchema();
   }
@@ -395,6 +434,12 @@ export class Engine implements TablensEngine {
     };
   }
 
+  /**
+   * Build (or reuse) a **row-id index** for the current view — filter, search, sort applied here.
+   *
+   * Stores ONLY `file_row_number`. Never widen this to `SELECT p.*` or column payloads: that
+   * materializes the dataset and tanks init on large files (see module-level comment).
+   */
   async buildView(spec: ViewSpec): Promise<ViewHandle> {
     this.ensureReady();
     const normalized: ViewSpec = {
@@ -417,6 +462,7 @@ export class Engine implements TablensEngine {
     }
 
     const buildStarted = Date.now();
+    // Row-id index only — do NOT materialize cell values into this table.
     await this.executor!.run(`
       CREATE TABLE IF NOT EXISTS ${tableName} AS
       SELECT file_row_number
@@ -444,6 +490,16 @@ export class Engine implements TablensEngine {
     return handle;
   }
 
+  /**
+   * Fetch one window of rendered rows for the UI.
+   *
+   * Two-step pattern (intentional — do not collapse into one big materialized table):
+   * 1. Page through the **small** indexed table (row ids only).
+   * 2. Join back to parquet on `file_row_number` for just those ids.
+   *
+   * This is how we get fast startup + bounded read cost per scroll. Replacing step 2 by storing
+   * all columns in step 1 was tried and reverted (multi-second init on large parquet).
+   */
   async getPage(request: PageRequest): Promise<PageResult> {
     this.ensureReady();
     const handle = await this.buildView(request.view);
@@ -453,6 +509,7 @@ export class Engine implements TablensEngine {
       request.includeMatches === false
         ? []
         : columns.map((column) => `${this.buildMatchExpr(column, request.view.search)} AS ${this.quoteIdent(`__m_${column}`)}`);
+    // ids from index → hydrate from parquet; keep file_row_number=true on the parquet side.
     const sql = `
       WITH page_ids AS (
         SELECT rowid AS page_pos, file_row_number

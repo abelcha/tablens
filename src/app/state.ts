@@ -5,6 +5,8 @@ import { copyToClipboard, formatRowAsCsv } from "src/utils/clipboard";
 type ExtendedState = State & {
   lastRequestId: number;
   viewportPending: boolean;
+  scrollRowsPerSec: number | null;
+  scrollBenchAt: number;
   counter: number;
   renameActive: boolean;
   renameQuery: string;
@@ -26,7 +28,7 @@ export function initialState(): ExtendedState {
     cursorRow: 0,
     cursorCol: 0,
     numFreezeCols: 0,
-    selectionMode: "row",
+    selectionMode: "column",
     markedRows: new Set(),
     found: [],
     searchActive: false,
@@ -45,6 +47,8 @@ export function initialState(): ExtendedState {
     visibleRows: [],
     lastRequestId: 0,
     viewportPending: false,
+    scrollRowsPerSec: null,
+    scrollBenchAt: 0,
     counter: 0,
     renameActive: false,
     renameQuery: "",
@@ -57,7 +61,7 @@ export function initialState(): ExtendedState {
     showStats: false,
     columnStats: [],
     showHelp: false,
-    columnCompaction: false,
+    columnWidthMode: "compact",
     colSearchActive: false,
     colSearchQuery: "",
     showColumnFilter: false,
@@ -72,6 +76,14 @@ export function initialState(): ExtendedState {
   };
 }
 
+/**
+ * Gate scroll input while a viewport fetch is in flight.
+ *
+ * If we advance rowsOffset/cursorRow before visibleRows catches up, the UI desyncs: gutter row
+ * numbers move (they use rowsOffset) but cell text stays on the old page — "frozen cells".
+ * Do not remove this guard to "speed up" scroll; use viewport PageWindowCache + trySyncViewportPatch
+ * and Engine row-id pagination instead of materializing parquet into DuckDB.
+ */
 function acceptViewportScroll(state: ExtendedState, next: ExtendedState) {
   if (state.viewportPending) return state;
   if (
@@ -83,6 +95,36 @@ function acceptViewportScroll(state: ExtendedState, next: ExtendedState) {
     return state;
   }
   return { ...next, viewportPending: true };
+}
+
+function sampleScrollSpeed(state: ExtendedState, next: ExtendedState) {
+  const useOffset = state.selectionMode === "column";
+  const before = useOffset ? state.rowsOffset : state.cursorRow;
+  const after = useOffset ? next.rowsOffset : next.cursorRow;
+  const delta = Math.abs(after - before);
+  if (delta === 0) {
+    return { scrollRowsPerSec: state.scrollRowsPerSec, scrollBenchAt: state.scrollBenchAt };
+  }
+
+  const now = performance.now();
+  const elapsed = state.scrollBenchAt > 0 ? now - state.scrollBenchAt : 0;
+  const instant = elapsed >= 16 ? (delta / elapsed) * 1000 : null;
+  const prev = state.scrollRowsPerSec;
+  const smoothed =
+    instant !== null && prev !== null
+      ? Math.round(prev * 0.55 + instant * 0.45)
+      : instant ?? prev;
+
+  return {
+    scrollRowsPerSec: smoothed ?? instant,
+    scrollBenchAt: now,
+  };
+}
+
+function applyVerticalScroll(state: ExtendedState, next: ExtendedState) {
+  const scrolled = acceptViewportScroll(state, next);
+  if (scrolled === state) return state;
+  return { ...scrolled, ...sampleScrollSpeed(state, scrolled) };
 }
 
 export function reducer(state: ExtendedState, action: Action): ExtendedState {
@@ -101,7 +143,7 @@ export function reducer(state: ExtendedState, action: Action): ExtendedState {
           next.rowsOffset = next.cursorRow;
         }
       }
-      return acceptViewportScroll(state, next);
+      return applyVerticalScroll(state, next);
     }
     case "MOVE_DOWN": {
       const next = { ...state };
@@ -118,7 +160,7 @@ export function reducer(state: ExtendedState, action: Action): ExtendedState {
           next.rowsOffset = next.cursorRow - action.pageSize + 1;
         }
       }
-      return acceptViewportScroll(state, next);
+      return applyVerticalScroll(state, next);
     }
     case "MOVE_LEFT": {
       const next = { ...state };
@@ -148,7 +190,7 @@ export function reducer(state: ExtendedState, action: Action): ExtendedState {
         // Move cursor to top of current page
         next.cursorRow = state.rowsOffset;
       }
-      return acceptViewportScroll(state, next);
+      return applyVerticalScroll(state, next);
     }
     case "PAGE_DOWN": {
       const next = { ...state };
@@ -165,8 +207,10 @@ export function reducer(state: ExtendedState, action: Action): ExtendedState {
       }
       // Final clamp for rowsOffset
       next.rowsOffset = Math.max(0, Math.min(maxRows - 1, next.rowsOffset));
-      return acceptViewportScroll(state, next);
+      return applyVerticalScroll(state, next);
     }
+    case "CLEAR_SCROLL_SPEED":
+      return { ...state, scrollRowsPerSec: null, scrollBenchAt: 0 };
     case "CYCLE_SELECTION_MODE": {
       let nextMode: SelectionMode = "row";
       if (state.selectionMode === "row") nextMode = "column";
@@ -277,46 +321,6 @@ export function reducer(state: ExtendedState, action: Action): ExtendedState {
         },
       };
     }
-    case "AUTO_RESIZE_COLUMNS": {
-      const hasOverrides = Object.keys(state.columnOverrides).length > 0;
-
-      if (hasOverrides) {
-        // Reset to default (clear all overrides)
-        return {
-          ...state,
-          columnOverrides: {},
-        };
-      }
-
-      // Auto-resize all columns to fit header and cell content
-      const widths: Record<number, number> = {};
-      const MIN_COLUMN_WIDTH = 6;
-
-      for (let colIdx = 0; colIdx < action.headers.length; colIdx++) {
-        const headerLength = action.headers[colIdx]?.length || 0;
-        let maxCellLength = 0;
-
-        // Check all visible rows for this column
-        for (const row of action.visibleRows) {
-          if (colIdx < row.length) {
-            const cell = row[colIdx] || "";
-            // For multi-line cells, check each line
-            const lines = cell.split("\n");
-            for (const line of lines) {
-              maxCellLength = Math.max(maxCellLength, line.length);
-            }
-          }
-        }
-
-        // Set width to max of header and max cell content, with minimum width
-        widths[colIdx] = Math.max(headerLength, maxCellLength, MIN_COLUMN_WIDTH);
-      }
-
-      return {
-        ...state,
-        columnOverrides: widths,
-      };
-    }
     case "YANK": {
       const { selectionMode, cursorRow, cursorCol, visibleRows, headers, rowsOffset } = action;
 
@@ -393,8 +397,15 @@ export function reducer(state: ExtendedState, action: Action): ExtendedState {
       return { ...state, columnStats: action.stats };
     case "TOGGLE_HELP":
       return { ...state, showHelp: !state.showHelp };
-    case "TOGGLE_COLUMN_COMPACTION":
-      return { ...state, columnCompaction: !state.columnCompaction };
+    case "CYCLE_COLUMN_WIDTH_MODE": {
+      const next =
+        state.columnWidthMode === "compact"
+          ? "fitCells"
+          : state.columnWidthMode === "fitCells"
+            ? "fitCellsAndHeaders"
+            : "compact";
+      return { ...state, columnWidthMode: next, columnOverrides: {} };
+    }
     case "ENTER_COL_SEARCH":
       return { ...state, colSearchActive: true };
     case "EXIT_COL_SEARCH":

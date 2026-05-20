@@ -1,7 +1,102 @@
-import type { State } from "src/types";
+/**
+ * Viewport layer: maps scroll position → visible cell strings.
+ *
+ * Engine returns pages via `file_row_number` index + parquet join (see Engine.ts — do not
+ * materialize rows in DuckDB). This module **caches** fetched pages in memory so small scrolls
+ * avoid repeated `getPage` calls.
+ *
+ * - `PageWindowCache`: last `getPage` result (large limit, e.g. 800 rows) keyed by view.
+ * - `trySyncViewportPatch`: slice cache synchronously when offset stays inside the window.
+ * - `computeViewportPatch`: async path; calls `source.getPage` on cache miss only.
+ *
+ * Scroll perf work belongs here (cache size, sync slice, coalescing), not in `buildView`.
+ */
+
+import type { ColumnWidthMode, SelectionMode, State } from "src/types";
 import { Engine } from "src/engine/Engine";
 import type { FilterQuery, ViewSpec } from "src/engine/types";
 import { computeColumnWidths, computeRowHeights } from "src/layout/calculator";
+
+function adjustedOverridesForOffset(
+  columnOverrides: Record<number, number>,
+  colsOffset: number,
+) {
+  const adjusted: Record<number, number> = {};
+  for (const [idx, width] of Object.entries(columnOverrides)) {
+    const i = parseInt(idx);
+    if (i >= colsOffset) adjusted[i - colsOffset] = width;
+  }
+  return adjusted;
+}
+
+/**
+ * Keep the selected column on screen when cursorCol moves (column/cell modes).
+ * Row mode scrolls via colsOffset in the reducer instead; do not skip this on the
+ * sync viewport path or arrow-right only updates cursorCol without shifting the view.
+ */
+export function alignColsOffset(args: {
+  headers: string[];
+  visibleRows: string[][];
+  colsOffset: number;
+  cursorCol: number;
+  selectionMode: SelectionMode;
+  termW: number;
+  totalRowCount: number;
+  columnOverrides: Record<number, number>;
+  columnWidthMode?: ColumnWidthMode;
+}) {
+  const {
+    headers,
+    visibleRows,
+    cursorCol,
+    selectionMode,
+    termW,
+    totalRowCount,
+    columnOverrides,
+    columnWidthMode,
+  } = args;
+  let colsOffset = args.colsOffset;
+
+  if (selectionMode === "row") return colsOffset;
+  if (cursorCol < colsOffset) return cursorCol;
+
+  const gutterWidth = String(totalRowCount).length;
+  const effectiveW = termW - gutterWidth - 2;
+
+  let dispHeaders = headers.slice(colsOffset);
+  let colWidths = computeColumnWidths(
+    dispHeaders,
+    visibleRows.map((r) => r.slice(colsOffset)),
+    effectiveW,
+    adjustedOverridesForOffset(columnOverrides, colsOffset),
+    columnWidthMode ?? "compact",
+  );
+
+  let relC = cursorCol - colsOffset;
+  let tw = 0;
+  for (let i = 0; i < relC; i++) tw += colWidths[i] || 0;
+
+  while (
+    (relC >= colWidths.length || tw + (colWidths[relC] || 0) > effectiveW) &&
+    colsOffset < headers.length - 1 &&
+    relC > 0
+  ) {
+    colsOffset++;
+    relC = cursorCol - colsOffset;
+    dispHeaders = headers.slice(colsOffset);
+    colWidths = computeColumnWidths(
+      dispHeaders,
+      visibleRows.map((r) => r.slice(colsOffset)),
+      effectiveW,
+      adjustedOverridesForOffset(columnOverrides, colsOffset),
+      columnWidthMode ?? "compact",
+    );
+    tw = 0;
+    for (let i = 0; i < relC; i++) tw += colWidths[i] || 0;
+  }
+
+  return colsOffset;
+}
 
 export interface ViewportPatch {
   rowsOffset: number;
@@ -12,6 +107,7 @@ export interface ViewportPatch {
   pageCache: PageWindowCache | null;
 }
 
+/** In-memory copy of a getPage window; avoids DuckDB when scroll stays inside [start, start+len). */
 export type PageWindowCache = {
   viewKey: string;
   startOffset: number;
@@ -90,6 +186,80 @@ function makeFullWidthMatches(rowCount: number, columnCount: number): boolean[][
   return Array.from({ length: rowCount }, () => Array(columnCount).fill(false));
 }
 
+/**
+ * Apply a scroll from the in-memory page window without waiting on DuckDB.
+ * Complements the row-id + parquet join model: we fetch a big chunk once, then slice locally.
+ */
+export function trySyncViewportPatch(args: {
+  state: State;
+  termW: number;
+  termH: number;
+  lastRenderedQuery: string;
+  lastRenderedUseRegex: boolean;
+  lastRenderedWholeWord: boolean;
+  lastRenderedCaseSensitive: boolean;
+  lastRenderedSorter: { column: number; direction: "asc" | "desc" } | null;
+  lastRenderedFilters: string;
+  pageCache: PageWindowCache | null;
+}): ViewportPatch | null {
+  const {
+    state,
+    termW,
+    termH,
+    lastRenderedQuery,
+    lastRenderedUseRegex,
+    lastRenderedWholeWord,
+    lastRenderedCaseSensitive,
+    lastRenderedSorter,
+    lastRenderedFilters,
+    pageCache,
+  } = args;
+  const { headers, selectionMode, cursorCol, columnOverrides, columnWidthMode, totalRowCount } =
+    state;
+  let { rowsOffset, colsOffset } = state;
+
+  const fetchLimit = Math.max(Math.floor((termH || 20) * 2), 200);
+  const viewKey = buildViewKey(state);
+
+  const queryChanged =
+    state.searchQuery !== lastRenderedQuery ||
+    state.searchUseRegex !== lastRenderedUseRegex ||
+    state.searchWholeWord !== lastRenderedWholeWord ||
+    state.searchCaseSensitive !== lastRenderedCaseSensitive ||
+    JSON.stringify(state.sorter) !== JSON.stringify(lastRenderedSorter) ||
+    JSON.stringify(state.columnFilterSelectionsByCol) !== lastRenderedFilters;
+
+  if (queryChanged || !pageCache || pageCache.viewKey !== viewKey) return null;
+
+  const cacheStart = pageCache.startOffset;
+  const cacheEnd = pageCache.startOffset + pageCache.rows.length;
+  if (rowsOffset < cacheStart || rowsOffset + fetchLimit > cacheEnd) return null;
+
+  const rel = rowsOffset - cacheStart;
+  const visibleRows = pageCache.rows.slice(rel, rel + fetchLimit);
+  const visibleMatches = pageCache.matches.slice(rel, rel + fetchLimit);
+  colsOffset = alignColsOffset({
+    headers,
+    visibleRows,
+    colsOffset,
+    cursorCol,
+    selectionMode,
+    termW,
+    totalRowCount,
+    columnOverrides,
+    columnWidthMode,
+  });
+
+  return {
+    rowsOffset,
+    colsOffset,
+    visibleRows,
+    visibleMatches,
+    totalRows: pageCache.totalRows,
+    pageCache,
+  };
+}
+
 export async function computeViewportPatch(args: {
   state: State;
   termW: number;
@@ -122,7 +292,7 @@ export async function computeViewportPatch(args: {
   let { rowsOffset, colsOffset, visibleRows, visibleMatches } = state;
 
   const fetchLimit = Math.max(Math.floor((termH || 20) * 2), 200);
-  const cacheLimit = Math.max(fetchLimit * 4, 500);
+  const cacheLimit = Math.max(fetchLimit * 8, 800);
   const view = buildViewSpec(state);
   const viewKey = buildViewKey(state);
   const includeMatches = view.search !== null;
@@ -161,6 +331,8 @@ export async function computeViewportPatch(args: {
     visibleMatches = pageCache!.matches.slice(rel, rel + fetchLimit);
     totalRows = pageCache!.totalRows;
   } else {
+    // Cache miss — one getPage (row-id index + parquet join). Do NOT "fix" slowness by materializing
+    // full rows in Engine.buildView; enlarge cache or prefetch instead.
     const res = await source.getPage({
       view,
       offset: rowsOffset,
@@ -180,58 +352,27 @@ export async function computeViewportPatch(args: {
     totalRows = nextCache.totalRows;
   }
 
-  if (selectionMode !== "row" && cursorCol < colsOffset) {
-    colsOffset = cursorCol;
-  }
-
-  let dispHeaders = headers.slice(colsOffset);
-  const getAdjustedOverrides = (offset: number) => {
-    const adjusted: Record<number, number> = {};
-    for (const [idx, width] of Object.entries(columnOverrides)) {
-      const i = parseInt(idx);
-      if (i >= offset) adjusted[i - offset] = width;
-    }
-    return adjusted;
-  };
+  colsOffset = alignColsOffset({
+    headers,
+    visibleRows,
+    colsOffset,
+    cursorCol,
+    selectionMode,
+    termW,
+    totalRowCount: totalRows,
+    columnOverrides,
+    columnWidthMode: state.columnWidthMode,
+  });
 
   const gutterWidth = String(totalRows).length;
-  const dataPadding = 2;
-  const effectiveW = termW - gutterWidth - dataPadding;
-
-  let colWidths = computeColumnWidths(
-    dispHeaders,
+  const effectiveW = termW - gutterWidth - 2;
+  const colWidths = computeColumnWidths(
+    headers.slice(colsOffset),
     visibleRows.map((r) => r.slice(colsOffset)),
     effectiveW,
-    getAdjustedOverrides(colsOffset),
+    adjustedOverridesForOffset(columnOverrides, colsOffset),
+    state.columnWidthMode,
   );
-
-  if (selectionMode !== "row") {
-    let relC = cursorCol - colsOffset;
-    let tw = 0;
-    for (let i = 0; i < relC; i++) tw += colWidths[i] || 0;
-
-    while (
-      (relC >= colWidths.length || tw + (colWidths[relC] || 0) > effectiveW) &&
-      colsOffset < headers.length - 1 &&
-      relC > 0
-    ) {
-      colsOffset++;
-      relC = cursorCol - colsOffset;
-      dispHeaders = headers.slice(colsOffset);
-      colWidths = computeColumnWidths(
-        dispHeaders,
-        visibleRows.map((r) => r.slice(colsOffset)),
-        effectiveW,
-        getAdjustedOverrides(colsOffset),
-      );
-      tw = 0;
-      for (let i = 0; i < relC; i++) tw += colWidths[i] || 0;
-    }
-
-    if (cursorCol < colsOffset) {
-      colsOffset = cursorCol;
-    }
-  }
 
   const rowHeights = computeRowHeights(
     visibleRows.map((r) => r.slice(colsOffset, colsOffset + colWidths.length)),
