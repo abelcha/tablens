@@ -124,6 +124,10 @@ export function wrapText(text: string, width: number, wordWrap: boolean): string
   return lines.length > 0 ? lines : [""];
 }
 
+function sortIndicator(direction: "asc" | "desc") {
+  return direction === "asc" ? " ▲" : " ▼";
+}
+
 export function buildHeaderLine(
   headers: string[],
   widths: number[],
@@ -131,6 +135,8 @@ export function buildHeaderLine(
   selectedColIdx?: number,
   hideSelected: boolean = false,
   compact: boolean = false,
+  sortedColIdx?: number,
+  sortDirection?: "asc" | "desc",
 ) {
   let line = "";
   if (gutterWidth > 0) {
@@ -140,6 +146,8 @@ export function buildHeaderLine(
     const width = widths[i] || 0;
     const usableWidth = Math.max(0, width - NUM_SPACES_BETWEEN_COLUMNS);
     const isSelected = selectedColIdx !== undefined && i === selectedColIdx;
+    const isSorted = sortedColIdx === i && sortDirection !== undefined;
+    const indicator = isSorted ? sortIndicator(sortDirection) : "";
 
     if (isSelected && hideSelected) {
       line += " ".repeat(width);
@@ -147,9 +155,11 @@ export function buildHeaderLine(
     }
 
     let text = compact ? h.replace(/\s+/g, " ") : h;
-    if (text.length > usableWidth) {
-      text = text.substring(0, usableWidth - 1) + "…";
+    const maxNameWidth = Math.max(0, usableWidth - indicator.length);
+    if (text.length > maxNameWidth) {
+      text = text.substring(0, Math.max(0, maxNameWidth - 1)) + "…";
     }
+    text += indicator;
     const leftPad = " ".repeat(LEFT_PADDING);
     const rightPad = " ".repeat(Math.max(0, width - text.length - LEFT_PADDING));
     const escaped = escapeMarkup(text);

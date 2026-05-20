@@ -5,16 +5,27 @@ import { parseInlineMarkup } from "src/app/markup";
 export function EmptyState({
   type,
   query,
+  message,
 }: {
-  type: "loading" | "no-results" | "empty-file";
+  type: "loading" | "no-results" | "empty-file" | "error";
   query?: string;
+  message?: string;
 }) {
   let title = "";
   let sub = "";
+  let footer = " Press ESC to clear search or Q to quit ";
   let icon = "◌";
   let iconColor = "#444444";
 
-  if (type === "no-results") {
+  if (type === "error") {
+    title = "Failed to load";
+    sub = message
+      ? `{red}${message}{/red}`
+      : "{red}An unknown error occurred{/red}";
+    footer = " Press Q to quit · : to run a query ";
+    icon = "✕";
+    iconColor = "#FF4444";
+  } else if (type === "no-results") {
     title = "No matches found";
     sub = query
       ? `No results for "{white}{bold}${query}{/bold}{/white}"`
@@ -41,11 +52,7 @@ export function EmptyState({
         <text content={parseInlineMarkup(` {bold}${title}{/bold} `)} fg="#ffffff" marginTop={1} />
       )}
       {sub && <text content={parseInlineMarkup(sub)} fg="#666666" marginTop={0} />}
-      <text
-        content={parseInlineMarkup(" Press ESC to clear search or Q to quit ")}
-        fg="#444444"
-        marginTop={2}
-      />
+      <text content={parseInlineMarkup(footer)} fg="#444444" marginTop={2} />
     </box>
   );
 }

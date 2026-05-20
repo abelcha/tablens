@@ -10,7 +10,6 @@ import {
 import { type KeyEvent } from "@opentui/core";
 import { useKeyboard, useRenderer } from "@opentui/react";
 import { Engine } from "src/engine/Engine";
-import type { EngineInput } from "src/engine/types";
 import { handleTablensKey } from "src/app/handleKeyboard";
 import {
   computeCursorOverlay,
@@ -29,6 +28,7 @@ import { QueryEditor } from "src/app/components/QueryEditor";
 import { HelpModal } from "src/app/components/HelpModal";
 import { ColumnFilterModal } from "src/app/components/ColumnFilterModal";
 import { parseInlineMarkup } from "src/app/markup";
+import { formatError } from "src/utils/error";
 import type { PageWindowCache } from "src/app/viewport";
 
 declare module "@opentui/react" {
@@ -71,6 +71,7 @@ export function TablensApp({
   }, [renderer]);
 
   const queryEditorRef = useRef<any>(null);
+  const consoleCaptureRef = useRef(false);
   const lastRenderedOffset = useRef(-1);
   const lastRenderedQuery = useRef("");
   const lastRenderedUseRegex = useRef(false);
@@ -101,27 +102,12 @@ export function TablensApp({
     pageCache: PageWindowCache | null;
   } | null>(null);
   const currentSearchQueryRef = useRef("");
+  const prevSorterRef = useRef<typeof sorter>(null);
 
   useEffect(() => {
-    async function init() {
-      try {
-        const input =
-          (query && query.trim().length > 0
-            ? { kind: "query", sql: query }
-            : /\.json$/i.test(file)
-              ? { kind: "query", sql: `SELECT * FROM read_json_auto('${file.replaceAll("'", "''")}')` }
-              : /\.(csv|tsv)$/i.test(file)
-                ? { kind: "csv", path: file }
-                : { kind: "parquet", path: file }) as EngineInput;
-        await source.open(input);
-        dispatch({ type: "SET_HEADERS", headers: source.getHeaders() });
-        dispatch({ type: "SET_TOTAL_ROW_COUNT", count: source.getTotalRows() });
-      } catch (err) {
-        console.error("Failed to connect to source:", err);
-      }
-    }
-    init();
-  }, [file, query, source]);
+    dispatch({ type: "SET_HEADERS", headers: source.getHeaders() });
+    dispatch({ type: "SET_TOTAL_ROW_COUNT", count: source.getTotalRows() });
+  }, [source]);
 
   const {
     headers,
@@ -361,33 +347,35 @@ export function TablensApp({
     [source, appliedSearchQuery, searchUseRegex, searchWholeWord, searchCaseSensitive, performSearch],
   );
 
-  const handleQuerySubmit = useCallback((sql: string) => {
-    if (!sql.trim()) {
-      dispatch({ type: "CLOSE_QUERY_EDITOR" });
-      return;
-    }
-    setExecutingQuery(true);
-    // Clear old data immediately
-    dispatch({ type: "SET_VISIBLE_ROWS", rows: [] });
-    dispatch({ type: "SET_HEADERS", headers: [] });
-    source
-      .runQuery(sql.trim())
-      .then(() => {
-        dispatch({ type: "SET_HEADERS", headers: source.getHeaders() });
-        dispatch({ type: "SET_TOTAL_ROW_COUNT", count: source.getTotalRows() });
+  const handleQuerySubmit = useCallback(
+    (sql: string) => {
+      if (!sql.trim()) {
         dispatch({ type: "CLOSE_QUERY_EDITOR" });
-        // Reset viewport to top
-        dispatch({ type: "RESET_VIEWPORT" });
-        // Reset lastRendered refs to force re-fetch
-        lastRenderedOffset.current = -1;
-      })
-      .catch((err) => {
-        console.error("Query failed:", err);
-      })
-      .finally(() => {
-        setExecutingQuery(false);
-      });
-  }, [source]);
+        return;
+      }
+      setExecutingQuery(true);
+      dispatch({ type: "SET_VISIBLE_ROWS", rows: [] });
+      dispatch({ type: "SET_HEADERS", headers: [] });
+      source
+        .runQuery(sql.trim())
+        .then(() => {
+          dispatch({ type: "SET_HEADERS", headers: source.getHeaders() });
+          dispatch({ type: "SET_TOTAL_ROW_COUNT", count: source.getTotalRows() });
+          dispatch({ type: "CLOSE_QUERY_EDITOR" });
+          dispatch({ type: "RESET_VIEWPORT" });
+          lastRenderedOffset.current = -1;
+        })
+        .catch((err) => {
+          console.error(`tablens: ${formatError(err)}`);
+          renderer.destroy();
+          process.exit(1);
+        })
+        .finally(() => {
+          setExecutingQuery(false);
+        });
+    },
+    [source, renderer],
+  );
 
   const handleSavePathSubmit = useCallback(
     (path: string) => {
@@ -414,7 +402,35 @@ export function TablensApp({
 
   // Handle sorting
   useEffect(() => {
-    if (!sorter) return;
+    const prev = prevSorterRef.current;
+    prevSorterRef.current = sorter;
+
+    if (!sorter) {
+      if (!prev) return;
+
+      setSorting(true);
+      source
+        .clearSort()
+        .then(() => {
+          dispatch({ type: "SET_TOTAL_ROW_COUNT", count: source.getTotalRows() });
+          lastRenderedOffset.current = -1;
+          if (appliedSearchQuery.length > 0) {
+            performSearch(
+              appliedSearchQuery,
+              searchUseRegex,
+              searchWholeWord,
+              searchCaseSensitive,
+            );
+          }
+        })
+        .catch((err) => {
+          console.error("Clear sort failed:", err);
+        })
+        .finally(() => {
+          setSorting(false);
+        });
+      return;
+    }
 
     const colName = headers[sorter.column];
     if (!colName) return;
@@ -426,8 +442,8 @@ export function TablensApp({
         direction: sorter.direction,
       })
       .then(() => {
-        // Refresh viewport/search
         dispatch({ type: "SET_TOTAL_ROW_COUNT", count: source.getTotalRows() });
+        lastRenderedOffset.current = -1;
         if (appliedSearchQuery.length > 0) {
           performSearch(
             appliedSearchQuery,
@@ -456,6 +472,8 @@ export function TablensApp({
 
   useEffect(() => {
     if (headers.length === 0) return;
+
+    dispatch({ type: "SET_VIEWPORT_PENDING", pending: true });
 
     const consoleHeight =
       renderer.console.visible && renderer.console.bounds?.height
@@ -518,13 +536,20 @@ export function TablensApp({
 
           if (shouldApply) {
             dispatch({ type: "APPLY_VIEWPORT_PATCH", patch, requestId });
+          } else {
+            dispatch({ type: "SET_VIEWPORT_PENDING", pending: false });
           }
         }
+      } catch (err) {
+        console.error("Viewport fetch failed:", err);
+        dispatch({ type: "SET_VIEWPORT_PENDING", pending: false });
       } finally {
         viewportRunningRef.current = false;
         if (viewportDirtyRef.current) {
           viewportRunningRef.current = true;
           void runViewportLoop();
+        } else {
+          dispatch({ type: "SET_VIEWPORT_PENDING", pending: false });
         }
       }
     }
@@ -612,6 +637,17 @@ export function TablensApp({
       ? filteredColIndices.map((i) => state.columnStats[i] ?? "")
       : state.columnStats;
 
+    const sortColumnInHeaders =
+      state.sorter === null
+        ? undefined
+        : filteredColIndices
+          ? filteredColIndices.indexOf(state.sorter.column)
+          : state.sorter.column;
+    const sortDirection =
+      sortColumnInHeaders !== undefined && sortColumnInHeaders >= 0
+        ? state.sorter.direction
+        : undefined;
+
     return computeTableContentModel({
       headers: dispHeaders,
       visibleRows: dispRows,
@@ -630,6 +666,11 @@ export function TablensApp({
       showStats: state.showStats,
       columnStats: dispStats,
       columnCompaction: state.columnCompaction,
+      sortColumnInHeaders:
+        sortColumnInHeaders !== undefined && sortColumnInHeaders >= 0
+          ? sortColumnInHeaders
+          : undefined,
+      sortDirection,
     });
   }, [
     headers,
@@ -647,6 +688,7 @@ export function TablensApp({
     state.showStats,
     state.columnStats,
     state.columnCompaction,
+    state.sorter,
     filteredColIndices,
     renderer.terminalWidth,
     renderer.terminalHeight,
@@ -699,9 +741,9 @@ export function TablensApp({
       handleSavePathSubmit,
       handleQuerySubmit,
       tableContent,
+      consoleCaptureRef,
     });
   });
-  console.log('RENDER')
 
   return (
     <>

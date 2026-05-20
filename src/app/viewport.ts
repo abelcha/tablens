@@ -212,7 +212,8 @@ export async function computeViewportPatch(args: {
 
     while (
       (relC >= colWidths.length || tw + (colWidths[relC] || 0) > effectiveW) &&
-      colsOffset < headers.length - 1
+      colsOffset < headers.length - 1 &&
+      relC > 0
     ) {
       colsOffset++;
       relC = cursorCol - colsOffset;
@@ -225,6 +226,10 @@ export async function computeViewportPatch(args: {
       );
       tw = 0;
       for (let i = 0; i < relC; i++) tw += colWidths[i] || 0;
+    }
+
+    if (cursorCol < colsOffset) {
+      colsOffset = cursorCol;
     }
   }
 

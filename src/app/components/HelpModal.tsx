@@ -18,8 +18,8 @@ export function HelpModal() {
 │ . or >   Resize column wider                     │
 │ , or <   Resize column narrower                  │
 ├─ SORTING ────────────────────────────────────────┤
-│ [ or K   Sort column ascending                   │
-│ ] or J   Sort column descending                  │
+│ Shift+↑/K or [   Sort ascending (toggle off)    │
+│ Shift+↓/J or ]   Sort descending (toggle off)    │
 └─────────────────────────────────────────────────────┘
   Press any key to close
   `;

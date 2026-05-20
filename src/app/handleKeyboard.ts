@@ -19,15 +19,35 @@ type QueryEditorHandle = {
   };
 };
 
+type ConsoleHandle = {
+  visible: boolean;
+  toggle: () => void;
+  blur: () => void;
+};
+
+function consoleHasFocus(console: ConsoleHandle) {
+  return (console as ConsoleHandle & { isFocused?: boolean }).isFocused === true;
+}
+
+function syncConsoleCapture(console: ConsoleHandle, captureRef?: { current: boolean }) {
+  if (!captureRef) return;
+  captureRef.current = consoleHasFocus(console);
+}
+
+function isConsoleCapturingKeys(
+  console: ConsoleHandle,
+  captureRef?: { current: boolean },
+) {
+  if (captureRef?.current) return true;
+  return consoleHasFocus(console);
+}
+
 export type KeyboardContext = {
   dispatch: (action: Action) => void;
   renderer: {
     destroy: () => void;
     terminalHeight: number;
-    console: {
-      visible: boolean;
-      toggle: () => void;
-    };
+    console: ConsoleHandle;
   };
   source: Engine;
   state: AppState;
@@ -40,6 +60,8 @@ export type KeyboardContext = {
   handleSavePathSubmit: (path: string) => void;
   handleQuerySubmit: (sql: string) => void;
   tableContent: TableContentModel | null;
+  /** Tracks console keyboard focus; synced on toggle / escape */
+  consoleCaptureRef?: { current: boolean };
 };
 
 export function handleTablensKey(key: KeyEvent, ctx: KeyboardContext): void {
@@ -57,6 +79,7 @@ export function handleTablensKey(key: KeyEvent, ctx: KeyboardContext): void {
     handleSavePathSubmit,
     handleQuerySubmit,
     tableContent,
+    consoleCaptureRef,
   } = ctx;
 
   const { headers, cursorCol } = state;
@@ -77,13 +100,28 @@ export function handleTablensKey(key: KeyEvent, ctx: KeyboardContext): void {
 
   if (key.ctrl && key.name === "`") {
     renderer.console.toggle();
+    syncConsoleCapture(renderer.console, consoleCaptureRef);
     return;
   }
   if (key.name === "`") {
     renderer.console.toggle();
+    syncConsoleCapture(renderer.console, consoleCaptureRef);
     return;
   }
-  if (renderer.console.visible) return;
+
+  // Console stays visible after Escape (blur only). Block app keys only while focused.
+  if (isConsoleCapturingKeys(renderer.console, consoleCaptureRef)) {
+    if (key.name === "escape") {
+      renderer.console.blur();
+      if (consoleCaptureRef) consoleCaptureRef.current = false;
+    }
+    return;
+  }
+
+  if (key.name === "escape" && renderer.console.visible) {
+    renderer.console.blur();
+    if (consoleCaptureRef) consoleCaptureRef.current = false;
+  }
 
   if (state.showHelp) {
     dispatch({ type: "TOGGLE_HELP" });
@@ -371,9 +409,13 @@ export function handleTablensKey(key: KeyEvent, ctx: KeyboardContext): void {
   }
 
   if (key.raw === ":") {
+    const editorQuery =
+      state.queryEditorValue.trim().length > 0
+        ? state.queryEditorValue
+        : source.getQuery();
     dispatch({
       type: "OPEN_QUERY_EDITOR",
-      query: source.getQuery(),
+      query: editorQuery,
     });
     return;
   }

@@ -593,6 +593,11 @@ export class Engine implements TablensEngine {
     await this.buildView(next);
   }
 
+  async clearSort(): Promise<void> {
+    const current = this.getCurrentSpecOrDefault();
+    await this.buildView({ ...current, sort: [] });
+  }
+
   async applyColumnFilter(column: string, values: string[]): Promise<void> {
     const current = this.getCurrentSpecOrDefault();
     const nextFilter = { ...current.filter };

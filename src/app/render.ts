@@ -38,6 +38,8 @@ export function computeTableContentModel(args: {
   showStats?: boolean;
   columnStats?: string[];
   columnCompaction?: boolean;
+  sortColumnInHeaders?: number;
+  sortDirection?: "asc" | "desc";
 }): TableContentModel {
   const {
     headers,
@@ -57,6 +59,8 @@ export function computeTableContentModel(args: {
     showStats,
     columnStats,
     columnCompaction,
+    sortColumnInHeaders,
+    sortDirection,
   } = args;
 
   // Calculate gutter width based on estimated max visible row
@@ -101,6 +105,12 @@ export function computeTableContentModel(args: {
     colWidths[colWidths.length - 1]! += remaining;
   }
   const dispHeaders = headers.slice(colsOffset, colsOffset + visibleColCount);
+  const sortedColIdx =
+    sortColumnInHeaders !== undefined &&
+    sortColumnInHeaders >= colsOffset &&
+    sortColumnInHeaders < colsOffset + dispHeaders.length
+      ? sortColumnInHeaders - colsOffset
+      : undefined;
 
   const rowHeights = computeRowHeights(
     visibleRows.map((r) => r.slice(colsOffset, colsOffset + visibleColCount)),
@@ -152,7 +162,16 @@ export function computeTableContentModel(args: {
   const content = parseInlineMarkup(
     // "\n" + // Blank line at the top
     buildSeparatorLine(colWidths, 0, maxTableWidth + gutterWidth + dataPadding) +
-    buildHeaderLine(dispHeaders, colWidths, gutterWidth, validSelectedColIdx, true, columnCompaction ?? false) +
+    buildHeaderLine(
+      dispHeaders,
+      colWidths,
+      gutterWidth,
+      validSelectedColIdx,
+      true,
+      columnCompaction ?? false,
+      sortedColIdx,
+      sortDirection,
+    ) +
     (dispTypes ? buildTypeLine(dispTypes, colWidths, gutterWidth) : "") +
     (dispStats ? buildStatsLine(dispStats, colWidths, gutterWidth) : "") +
     buildSeparatorLine(colWidths, gutterWidth, termW) +

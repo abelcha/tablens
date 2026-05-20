@@ -30,9 +30,14 @@ export function computeHeaderOverlay(args: {
     return { visible: false };
   }
 
-  const headerText = dispHeaders[relC] || "";
+  let headerText = dispHeaders[relC] || "";
   if (!headerText) {
     return { visible: false };
+  }
+
+  const sorter = state.sorter;
+  if (sorter && sorter.column === cursorCol) {
+    headerText += sorter.direction === "asc" ? " ▲" : " ▼";
   }
 
   const overlayPadding = 1;

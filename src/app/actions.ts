@@ -11,6 +11,7 @@ export type Action =
   | { type: "RESET_VIEWPORT"; preserveColumn?: boolean }
   | { type: "SET_HEADERS"; headers: string[] }
   | { type: "APPLY_VIEWPORT_PATCH"; patch: any; requestId: number }
+  | { type: "SET_VIEWPORT_PENDING"; pending: boolean }
   | { type: "RESIZE_COLUMN"; delta: number; currentWidth?: number }
   | { type: "ENTER_SEARCH" }
   | { type: "EXIT_SEARCH" }
@@ -20,6 +21,7 @@ export type Action =
   | { type: "TOGGLE_SEARCH_CASE_SENSITIVE" }
   | { type: "SET_SEARCH_MATCH_ROW_COUNT"; count: number | null }
   | { type: "SET_SEARCH_ERROR"; error: string | null }
+  | { type: "SET_LOAD_ERROR"; error: string | null }
   | { type: "SORT"; direction: "asc" | "desc" }
   | { type: "AUTO_RESIZE_COLUMNS"; headers: string[]; visibleRows: string[][] }
   | { type: "ENTER_RENAME_COLUMN" }
