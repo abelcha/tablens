@@ -1,13 +1,7 @@
 import { type KeyEvent } from "@opentui/core";
 import type { Action } from "src/app/actions";
-import { appendFileSync } from "fs";
 
 export function keyToActions(key: KeyEvent, ctx: { pageSize: number }): Action[] {
-  // Debug logging to help identify why shift+up/down might not be working
-  try {
-    appendFileSync("keyboard_debug.log", JSON.stringify(key) + " mode: " + ctx.pageSize + "\n");
-  } catch (e) { }
-
   const actions: Action[] = [];
 
   switch (key.name) {
