@@ -4,11 +4,20 @@ import { parseArgs } from "node:util";
 import { ConsolePosition, createCliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
 import { Engine } from "src/engine/Engine";
+import { buildEngineInput } from "src/engine/openInput";
 import { TablensApp } from "src/index";
+import { formatError } from "src/utils/error";
 
-export async function launchTablens(options: { file?: string; query?: string }) {
+export async function launchTablens(options: { file: string; query?: string }) {
   const { file, query } = options;
   const source = new Engine();
+
+  try {
+    await source.open(buildEngineInput(file, query));
+  } catch (err) {
+    console.error(`tablens: ${formatError(err)}`);
+    process.exit(1);
+  }
 
   const renderer = await createCliRenderer({
     exitOnCtrlC: true,
@@ -25,13 +34,9 @@ export async function launchTablens(options: { file?: string; query?: string }) 
     },
   });
 
-  console.log("This appears in the overlay");
-  console.error("Errors are color-coded red");
-  console.warn("Warnings appear in yellow");
-
   createRoot(renderer).render(
     createElement(TablensApp, {
-      file: file || "SQL Query",
+      file,
       query,
       source,
     }),
@@ -89,7 +94,7 @@ Keyboard shortcuts (in app):
     file = "data.csv";
   }
 
-  await launchTablens({ file, query });
+  await launchTablens({ file: file || "data.csv", query });
 }
 
 if (import.meta.main) {

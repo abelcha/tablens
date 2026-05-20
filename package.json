@@ -8,18 +8,16 @@
     "tablens": "bun run index.ts"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "bun-types": "latest"
   },
   "peerDependencies": {
     "typescript": "^5"
   },
   "dependencies": {
-    "@duckdb/node-api": "1.5.0-r.1",
-    "@opentui/core": "^0.1.61",
-    "@opentui/react": "^0.1.61",
-    "@types/blessed": "^0.1.27",
-    "blessed": "^0.1.81",
-    "csv-parser": "^3.2.0",
+    "@duckdb/node-api": "^1.5.2-r.2",
+    "@opentui/core": "^0.2.14",
+    "@opentui/react": "^0.2.14",
     "react": "^19.2.3"
   }
 }
