@@ -41,7 +41,6 @@ export function initialState(): ExtendedState {
     headers: [],
     totalRowCount: 0,
     visibleRows: [],
-    isMaterialized: false,
     lastRequestId: 0,
     counter: 0,
     renameActive: false,
@@ -186,8 +185,6 @@ export function reducer(state: ExtendedState, action: Action): ExtendedState {
     }
     case "SET_SEARCH_ERROR":
       return { ...state, searchError: action.error };
-    case "SET_MATERIALIZED":
-      return { ...state, isMaterialized: action.isMaterialized };
     case "SORT": {
       if (state.selectionMode !== "column") return state;
       return {

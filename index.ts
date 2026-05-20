@@ -3,12 +3,12 @@ import { createElement } from "react";
 import { parseArgs } from "node:util";
 import { ConsolePosition, createCliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
-import { DuckDBDataSource } from "src/data/source";
+import { Engine } from "src/engine/Engine";
 import { TablensApp } from "src/index";
 
-export async function launchTablens(options: { file?: string; query?: string; materialize?: string }) {
-  const { file, query, materialize } = options;
-  const source = new DuckDBDataSource(materialize ? parseMaterializeMode(materialize) : "auto");
+export async function launchTablens(options: { file?: string; query?: string }) {
+  const { file, query } = options;
+  const source = new Engine();
 
   const renderer = await createCliRenderer({
     exitOnCtrlC: true,
@@ -46,10 +46,6 @@ async function main() {
         type: "string",
         short: "q",
       },
-      materialize: {
-        type: "string",
-        short: "m",
-      },
       help: {
         type: "boolean",
         short: "h",
@@ -70,12 +66,6 @@ Arguments:
 
 Options:
   -q, --query <sql> Execute SQL query instead of loading file
-  -m, --materialize <mode>
-                    Materialization strategy: auto|always|never|lazy
-                      auto: materialize if <400MB AND <10M rows (default)
-                      always: always materialize to RAM (fast, memory intensive)
-                      never: never materialize (slowest, lowest memory)
-                      lazy: materialize on-demand when needed
   -h, --help        Show this help message
 
 Keyboard shortcuts (in app):
@@ -85,11 +75,8 @@ Keyboard shortcuts (in app):
   f                  Filter column (column mode)
   t                  Toggle column types
   i                  Toggle column stats
-  s                  Save
+  s                  Export current view
   x                  Auto-resize columns
-  e                  Rename column (column mode)
-  d                  Delete column (column mode)
-  u                  Unnest column (column mode)
   :                  Query editor
 `);
     process.exit(0);
@@ -102,15 +89,7 @@ Keyboard shortcuts (in app):
     file = "data.csv";
   }
 
-  await launchTablens({ file, query, materialize: values.materialize });
-}
-
-function parseMaterializeMode(value: string): "always" | "never" | "auto" | "lazy" {
-  const v = value.toLowerCase();
-  if (v === "always" || v === "a") return "always";
-  if (v === "never" || v === "n") return "never";
-  if (v === "lazy" || v === "l") return "lazy";
-  return "auto";
+  await launchTablens({ file, query });
 }
 
 if (import.meta.main) {

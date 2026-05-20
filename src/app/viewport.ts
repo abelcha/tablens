@@ -1,5 +1,6 @@
 import type { State } from "src/types";
-import { DuckDBDataSource } from "src/data/source";
+import { Engine } from "src/engine/Engine";
+import type { FilterQuery, ViewSpec } from "src/engine/types";
 import { computeColumnWidths, computeRowHeights } from "src/layout/calculator";
 
 export interface ViewportPatch {
@@ -7,19 +8,101 @@ export interface ViewportPatch {
   colsOffset: number;
   visibleRows: string[][];
   visibleMatches: boolean[][];
+  totalRows: number;
+  pageCache: PageWindowCache | null;
+}
+
+export type PageWindowCache = {
+  viewKey: string;
+  startOffset: number;
+  rows: string[][];
+  matches: boolean[][];
+  totalRows: number;
+};
+
+function buildFilterQuery(state: State): FilterQuery {
+  const filter: FilterQuery = {};
+  for (const [colIdxStr, values] of Object.entries(state.columnFilterSelectionsByCol)) {
+    if (!values || values.length === 0) continue;
+    const colIdx = Number(colIdxStr);
+    const column = state.headers[colIdx];
+    if (!column) continue;
+    const hasNull = values.includes("(null)");
+    const nonNull = values.filter((value) => value !== "(null)");
+    if (hasNull && nonNull.length === 0) {
+      filter[column] = { $isNull: true };
+    } else if (hasNull) {
+      filter[column] = { $in: nonNull, $isNull: true };
+    } else {
+      filter[column] = nonNull.length === 1 ? nonNull[0]! : { $in: nonNull };
+    }
+  }
+  return filter;
+}
+
+function buildViewSpec(state: State): ViewSpec {
+  const sort =
+    state.sorter && state.headers[state.sorter.column]
+      ? [
+          {
+            column: state.headers[state.sorter.column]!,
+            direction: state.sorter.direction,
+          },
+        ]
+      : [];
+
+  const search =
+    state.searchQuery.length > 0
+      ? {
+          query: state.searchQuery,
+          useRegex: state.searchUseRegex,
+          wholeWord: state.searchWholeWord,
+          caseSensitive: state.searchCaseSensitive,
+        }
+      : null;
+
+  return {
+    sort,
+    filter: buildFilterQuery(state),
+    search,
+  };
+}
+
+function buildViewKey(state: State): string {
+  return JSON.stringify({
+    sort: state.sorter && state.headers[state.sorter.column]
+      ? [{ column: state.headers[state.sorter.column], direction: state.sorter.direction }]
+      : [],
+    filter: buildFilterQuery(state),
+    search:
+      state.searchQuery.length > 0
+        ? {
+            query: state.searchQuery,
+            useRegex: state.searchUseRegex,
+            wholeWord: state.searchWholeWord,
+            caseSensitive: state.searchCaseSensitive,
+          }
+        : null,
+  });
+}
+
+function makeFullWidthMatches(rowCount: number, columnCount: number): boolean[][] {
+  return Array.from({ length: rowCount }, () => Array(columnCount).fill(false));
 }
 
 export async function computeViewportPatch(args: {
   state: State;
   termW: number;
   termH: number;
-  source: DuckDBDataSource;
+  source: Engine;
   lastRenderedOffset: number;
   lastRenderedQuery: string;
   lastRenderedUseRegex: boolean;
   lastRenderedWholeWord: boolean;
   lastRenderedCaseSensitive: boolean;
   lastRenderedSorter: { column: number; direction: "asc" | "desc" } | null;
+  lastRenderedFilters: string;
+  pageCache: PageWindowCache | null;
 }): Promise<ViewportPatch> {
   const {
     state,
@@ -32,53 +115,71 @@ export async function computeViewportPatch(args: {
     lastRenderedWholeWord,
     lastRenderedCaseSensitive,
     lastRenderedSorter,
+    lastRenderedFilters,
+    pageCache,
   } = args;
   const { headers, selectionMode, cursorRow, cursorCol, wrapMode, columnOverrides } = state;
   let { rowsOffset, colsOffset, visibleRows, visibleMatches } = state;
 
-  // Fetch more rows to support larger sample window for column width calculation
-  // This prevents columns from disappearing/reappearing with sparse data
   const fetchLimit = Math.max(Math.floor((termH || 20) * 2), 200);
+  const cacheLimit = Math.max(fetchLimit * 4, 500);
+  const view = buildViewSpec(state);
+  const viewKey = buildViewKey(state);
+  const includeMatches = view.search !== null;
 
-  // 1. Vertical scrolling (if needed by cursor)
   if (selectionMode !== "column" && cursorRow < rowsOffset) {
     rowsOffset = cursorRow;
   }
 
-  // 2. Fetch if offset changed, query changed, or rows empty
   const queryChanged =
     state.searchQuery !== lastRenderedQuery ||
     state.searchUseRegex !== lastRenderedUseRegex ||
     state.searchWholeWord !== lastRenderedWholeWord ||
     state.searchCaseSensitive !== lastRenderedCaseSensitive ||
-    JSON.stringify(state.sorter) !== JSON.stringify(lastRenderedSorter);
+    JSON.stringify(state.sorter) !== JSON.stringify(lastRenderedSorter) ||
+    JSON.stringify(state.columnFilterSelectionsByCol) !== lastRenderedFilters;
 
   if (queryChanged) {
-    // If it's a sort change, we might want to keep the offset if we were clever,
-    // but resetting to 0 is safer and often what users expect when sorting changes.
-    // The SORT action already resets rowsOffset to 0, so this just ensures we re-fetch.
     rowsOffset = state.rowsOffset;
   }
 
-  if (rowsOffset !== lastRenderedOffset || visibleRows.length === 0 || queryChanged) {
-    if (state.searchQuery.length > 0) {
-      const res = await source.getMatchingRowsWithMatches({
-        offset: rowsOffset,
-        limit: fetchLimit,
-        query: state.searchQuery,
-        useRegex: state.searchUseRegex,
-        wholeWord: state.searchWholeWord,
-        caseSensitive: state.searchCaseSensitive,
-      });
-      visibleRows = res.rows;
-      visibleMatches = res.matches;
-    } else {
-      visibleRows = await source.getRows(rowsOffset, fetchLimit);
-      visibleMatches = visibleRows.map((r) => r.map(() => false));
-    }
+  let totalRows = state.totalRowCount;
+  const cacheStart = pageCache && pageCache.viewKey === viewKey ? pageCache.startOffset : -1;
+  const cacheEnd = pageCache && pageCache.viewKey === viewKey ? pageCache.startOffset + pageCache.rows.length : -1;
+  const canServeFromCache =
+    pageCache !== null &&
+    pageCache.viewKey === viewKey &&
+    rowsOffset >= cacheStart &&
+    rowsOffset + fetchLimit <= cacheEnd;
+
+  let nextCache = pageCache;
+  const needsFetch = visibleRows.length === 0 || queryChanged || !canServeFromCache;
+
+  if (canServeFromCache && !needsFetch) {
+    const rel = rowsOffset - pageCache!.startOffset;
+    visibleRows = pageCache!.rows.slice(rel, rel + fetchLimit);
+    visibleMatches = pageCache!.matches.slice(rel, rel + fetchLimit);
+    totalRows = pageCache!.totalRows;
+  } else {
+    const res = await source.getPage({
+      view,
+      offset: rowsOffset,
+      limit: cacheLimit,
+      columns: headers,
+      includeMatches,
+    });
+    nextCache = {
+      viewKey,
+      startOffset: rowsOffset,
+      rows: res.rows,
+      matches: res.matches || makeFullWidthMatches(res.rows.length, headers.length),
+      totalRows: res.totalRows,
+    };
+    visibleRows = nextCache.rows.slice(0, fetchLimit);
+    visibleMatches = nextCache.matches.slice(0, fetchLimit);
+    totalRows = nextCache.totalRows;
   }
 
-  // 3. Horizontal scrolling (if needed by cursor)
   if (selectionMode !== "row" && cursorCol < colsOffset) {
     colsOffset = cursorCol;
   }
@@ -93,7 +194,7 @@ export async function computeViewportPatch(args: {
     return adjusted;
   };
 
-  const gutterWidth = String(state.totalRowCount).length;
+  const gutterWidth = String(totalRows).length;
   const dataPadding = 2;
   const effectiveW = termW - gutterWidth - dataPadding;
 
@@ -127,15 +228,13 @@ export async function computeViewportPatch(args: {
     }
   }
 
-  // 4. Vertical "auto-scroll" if cursor past bottom
   const rowHeights = computeRowHeights(
     visibleRows.map((r) => r.slice(colsOffset, colsOffset + colWidths.length)),
     colWidths,
     wrapMode,
   );
-  let curH = 0,
-    visCount = 0;
-  // termH already excludes status bar, subtract: blank line + header + separator + bottom separator + 1 buffer
+  let curH = 0;
+  let visCount = 0;
   const availableRowHeight = termH - 5;
   for (const h of rowHeights) {
     if (curH + h > availableRowHeight && visCount > 0) break;
@@ -144,27 +243,39 @@ export async function computeViewportPatch(args: {
   }
 
   const relativeCursor = cursorRow - rowsOffset;
-  // Scroll when cursor goes past last visible row
   if (relativeCursor >= visCount && selectionMode !== "column") {
     const diff = relativeCursor - visCount + 1;
     rowsOffset += diff;
-    // Re-fetch rows after auto-scroll
-    if (state.searchQuery.length > 0) {
-      const res = await source.getMatchingRowsWithMatches({
-        offset: rowsOffset,
-        limit: fetchLimit,
-        query: state.searchQuery,
-        useRegex: state.searchUseRegex,
-        wholeWord: state.searchWholeWord,
-        caseSensitive: state.searchCaseSensitive,
-      });
-      visibleRows = res.rows;
-      visibleMatches = res.matches;
+    if (
+      nextCache &&
+      nextCache.viewKey === viewKey &&
+      rowsOffset >= nextCache.startOffset &&
+      rowsOffset + fetchLimit <= nextCache.startOffset + nextCache.rows.length
+    ) {
+      const rel = rowsOffset - nextCache.startOffset;
+      visibleRows = nextCache.rows.slice(rel, rel + fetchLimit);
+      visibleMatches = nextCache.matches.slice(rel, rel + fetchLimit);
+      totalRows = nextCache.totalRows;
     } else {
-      visibleRows = await source.getRows(rowsOffset, fetchLimit);
-      visibleMatches = visibleRows.map((r) => r.map(() => false));
+      const res = await source.getPage({
+        view,
+        offset: rowsOffset,
+        limit: cacheLimit,
+        columns: headers,
+        includeMatches,
+      });
+      nextCache = {
+        viewKey,
+        startOffset: rowsOffset,
+        rows: res.rows,
+        matches: res.matches || makeFullWidthMatches(res.rows.length, headers.length),
+        totalRows: res.totalRows,
+      };
+      visibleRows = nextCache.rows.slice(0, fetchLimit);
+      visibleMatches = nextCache.matches.slice(0, fetchLimit);
+      totalRows = nextCache.totalRows;
     }
   }
 
-  return { rowsOffset, colsOffset, visibleRows, visibleMatches };
+  return { rowsOffset, colsOffset, visibleRows, visibleMatches, totalRows, pageCache: nextCache };
 }

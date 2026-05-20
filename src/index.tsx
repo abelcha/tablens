@@ -9,7 +9,8 @@ import {
 } from "react";
 import { type KeyEvent } from "@opentui/core";
 import { useKeyboard, useRenderer } from "@opentui/react";
-import { DuckDBDataSource } from "src/data/source";
+import { Engine } from "src/engine/Engine";
+import type { EngineInput } from "src/engine/types";
 import { keyToActions } from "src/app/keyboard";
 import {
   computeCursorOverlay,
@@ -28,6 +29,7 @@ import { QueryEditor } from "src/app/components/QueryEditor";
 import { HelpModal } from "src/app/components/HelpModal";
 import { ColumnFilterModal } from "src/app/components/ColumnFilterModal";
 import { parseInlineMarkup } from "src/app/markup";
+import type { PageWindowCache } from "src/app/viewport";
 
 declare module "@opentui/react" {
   namespace JSX {
@@ -50,12 +52,11 @@ export function TablensApp({
 }: {
   file: string;
   query?: string;
-  source: DuckDBDataSource;
+  source: Engine;
 }) {
   const renderer = useRenderer();
   const [state, dispatch] = useReducer(reducer, initialState());
   const [terminalBgColor, setTerminalBgColor] = useState<string>("#1e1e1e");
-  const [materializationInfo, setMaterializationInfo] = useState<{ isMaterialized: boolean; skipped: boolean; fileSize: number; totalRows: number }>({ isMaterialized: false, skipped: false, fileSize: 0, totalRows: 0 });
 
   useEffect(() => {
     renderer
@@ -79,16 +80,42 @@ export function TablensApp({
     column: number;
     direction: "asc" | "desc";
   } | null>(null);
+  const lastRenderedFilters = useRef("");
+  const pageCache = useRef<PageWindowCache | null>(null);
   const lastViewportRequestId = useRef(0);
+  const viewportRunningRef = useRef(false);
+  const viewportDirtyRef = useRef(false);
+  const viewportSnapshotRef = useRef<{
+    requestId: number;
+    state: typeof state;
+    termW: number;
+    termH: number;
+    source: Engine;
+    lastRenderedOffset: number;
+    lastRenderedQuery: string;
+    lastRenderedUseRegex: boolean;
+    lastRenderedWholeWord: boolean;
+    lastRenderedCaseSensitive: boolean;
+    lastRenderedSorter: { column: number; direction: "asc" | "desc" } | null;
+    lastRenderedFilters: string;
+    pageCache: PageWindowCache | null;
+  } | null>(null);
   const currentSearchQueryRef = useRef("");
 
   useEffect(() => {
     async function init() {
       try {
-        await source.connect({ filePath: file, query });
+        const input =
+          (query && query.trim().length > 0
+            ? { kind: "query", sql: query }
+            : /\.json$/i.test(file)
+              ? { kind: "query", sql: `SELECT * FROM read_json_auto('${file.replaceAll("'", "''")}')` }
+              : /\.(csv|tsv)$/i.test(file)
+                ? { kind: "csv", path: file }
+                : { kind: "parquet", path: file }) as EngineInput;
+        await source.open(input);
         dispatch({ type: "SET_HEADERS", headers: source.getHeaders() });
         dispatch({ type: "SET_TOTAL_ROW_COUNT", count: source.getTotalRows() });
-        setMaterializationInfo(source.getMaterializationInfo());
       } catch (err) {
         console.error("Failed to connect to source:", err);
       }
@@ -114,7 +141,6 @@ export function TablensApp({
     searchWholeWord,
     searchCaseSensitive,
     searchMatchRowCount,
-    isMaterialized,
     sorter,
     renameActive,
     renameQuery,
@@ -127,6 +153,7 @@ export function TablensApp({
     columnFilterData,
     columnFilterCursor,
     columnFilterSelectedValues,
+    columnFilterSelectionsByCol,
     columnFilterSearchActive,
     columnFilterSearchQuery,
   } = state;
@@ -163,22 +190,6 @@ export function TablensApp({
   );
   const visibleColumnFilterCursor = activeColumnFilterCursor - columnFilterWindowStart;
 
-  // Poll for materialization status until complete
-  useEffect(() => {
-    if (isMaterialized) return;
-
-    const interval = setInterval(() => {
-      const materialized = source.getIsMaterialized();
-      if (materialized) {
-        dispatch({ type: "SET_MATERIALIZED", isMaterialized: true });
-        setMaterializationInfo(source.getMaterializationInfo());
-        clearInterval(interval);
-      }
-    }, 500);
-
-    return () => clearInterval(interval);
-  }, [source, isMaterialized]);
-
   const [appliedSearchQuery, setAppliedSearchQuery] = useState(searchQuery);
   const [searchLoading, setSearchLoading] = useState(false);
   const [sorting, setSorting] = useState(false);
@@ -214,16 +225,6 @@ export function TablensApp({
       wholeWord: boolean,
       caseSensitive: boolean,
     ) => {
-      // Avoid redundant searches
-      if (
-        query === lastAppliedParams.current.query &&
-        useRegex === lastAppliedParams.current.useRegex &&
-        wholeWord === lastAppliedParams.current.wholeWord &&
-        caseSensitive === lastAppliedParams.current.caseSensitive
-      ) {
-        return;
-      }
-
       lastAppliedParams.current = { query, useRegex, wholeWord, caseSensitive };
       setSearchLoading(true);
       source
@@ -235,6 +236,9 @@ export function TablensApp({
         })
         .then((count) => {
           setAppliedSearchQuery(query);
+          if (count !== null) {
+            dispatch({ type: "SET_TOTAL_ROW_COUNT", count });
+          }
           dispatch({ type: "SET_SEARCH_MATCH_ROW_COUNT", count });
         })
         .catch((err) => {
@@ -287,7 +291,6 @@ export function TablensApp({
         .then(() => {
           dispatch({ type: "SET_HEADERS", headers: source.getHeaders() });
           dispatch({ type: "SET_TOTAL_ROW_COUNT", count: source.getTotalRows() });
-          dispatch({ type: "SET_MATERIALIZED", isMaterialized: true });
           // Keep cursor on same column — don't reset position
           lastRenderedOffset.current = -1;
         })
@@ -336,10 +339,17 @@ export function TablensApp({
         .then(() => {
           dispatch({ type: "SET_HEADERS", headers: source.getHeaders() });
           dispatch({ type: "SET_TOTAL_ROW_COUNT", count: source.getTotalRows() });
-          dispatch({ type: "SET_MATERIALIZED", isMaterialized: false });
           dispatch({ type: "CLOSE_COLUMN_FILTER" });
           dispatch({ type: "RESET_VIEWPORT", preserveColumn: true });
           lastRenderedOffset.current = -1;
+          if (appliedSearchQuery.length > 0) {
+            performSearch(
+              appliedSearchQuery,
+              searchUseRegex,
+              searchWholeWord,
+              searchCaseSensitive,
+            );
+          }
         })
         .catch((err) => {
           console.error("Column filter failed:", err);
@@ -348,7 +358,7 @@ export function TablensApp({
           setExecutingQuery(false);
         });
     },
-    [source],
+    [source, appliedSearchQuery, searchUseRegex, searchWholeWord, searchCaseSensitive, performSearch],
   );
 
   const handleQuerySubmit = useCallback((sql: string) => {
@@ -365,7 +375,6 @@ export function TablensApp({
       .then(() => {
         dispatch({ type: "SET_HEADERS", headers: source.getHeaders() });
         dispatch({ type: "SET_TOTAL_ROW_COUNT", count: source.getTotalRows() });
-        dispatch({ type: "SET_MATERIALIZED", isMaterialized: false });
         dispatch({ type: "CLOSE_QUERY_EDITOR" });
         // Reset viewport to top
         dispatch({ type: "RESET_VIEWPORT" });
@@ -446,7 +455,7 @@ export function TablensApp({
   ]);
 
   useEffect(() => {
-    if (headers.length === 0 || totalRowCount === 0) return;
+    if (headers.length === 0) return;
 
     const consoleHeight =
       renderer.console.visible && renderer.console.bounds?.height
@@ -456,7 +465,8 @@ export function TablensApp({
     const tableW = renderer.terminalWidth;
     const requestId = ++lastViewportRequestId.current;
 
-    computeViewportPatch({
+    viewportSnapshotRef.current = {
+      requestId,
       state: { ...state, searchQuery: appliedSearchQuery },
       termW: tableW,
       termH: tableH,
@@ -467,27 +477,59 @@ export function TablensApp({
       lastRenderedWholeWord: lastRenderedWholeWord.current,
       lastRenderedCaseSensitive: lastRenderedCaseSensitive.current,
       lastRenderedSorter: lastRenderedSorter.current,
-    }).then((patch) => {
-      // Only update if this is the latest request to avoid race conditions
-      if (requestId < lastViewportRequestId.current) return;
+      lastRenderedFilters: lastRenderedFilters.current,
+      pageCache: pageCache.current,
+    };
+    viewportDirtyRef.current = true;
+    if (viewportRunningRef.current) return;
 
-      if (
-        patch.rowsOffset !== state.rowsOffset ||
-        patch.colsOffset !== state.colsOffset ||
-        patch.visibleRows !== state.visibleRows ||
-        patch.visibleMatches !== state.visibleMatches ||
-        JSON.stringify(state.sorter) !==
-          JSON.stringify(lastRenderedSorter.current)
-      ) {
-        lastRenderedOffset.current = patch.rowsOffset;
-        lastRenderedQuery.current = appliedSearchQuery;
-        lastRenderedUseRegex.current = searchUseRegex;
-        lastRenderedWholeWord.current = searchWholeWord;
-        lastRenderedCaseSensitive.current = searchCaseSensitive;
-        lastRenderedSorter.current = state.sorter;
-        dispatch({ type: "APPLY_VIEWPORT_PATCH", patch, requestId });
+    viewportRunningRef.current = true;
+    async function runViewportLoop(): Promise<void> {
+      try {
+        while (viewportDirtyRef.current) {
+          viewportDirtyRef.current = false;
+          const snapshot = viewportSnapshotRef.current;
+          if (!snapshot) break;
+          const requestId = snapshot.requestId;
+
+          const patch = await computeViewportPatch(snapshot);
+
+          if (requestId < lastViewportRequestId.current) continue;
+
+          const currentState = snapshot.state;
+          const previousSorter = lastRenderedSorter.current;
+          const shouldApply =
+            patch.rowsOffset !== currentState.rowsOffset ||
+            patch.colsOffset !== currentState.colsOffset ||
+            patch.visibleRows !== currentState.visibleRows ||
+            patch.visibleMatches !== currentState.visibleMatches ||
+            JSON.stringify(currentState.sorter) !== JSON.stringify(previousSorter);
+
+          lastRenderedOffset.current = patch.rowsOffset;
+          lastRenderedQuery.current = currentState.searchQuery;
+          lastRenderedUseRegex.current = currentState.searchUseRegex;
+          lastRenderedWholeWord.current = currentState.searchWholeWord;
+          lastRenderedCaseSensitive.current = currentState.searchCaseSensitive;
+          lastRenderedSorter.current = currentState.sorter;
+          lastRenderedFilters.current = JSON.stringify(currentState.columnFilterSelectionsByCol);
+          pageCache.current = patch.pageCache;
+
+          lastRenderedSorter.current = currentState.sorter;
+
+          if (shouldApply) {
+            dispatch({ type: "APPLY_VIEWPORT_PATCH", patch, requestId });
+          }
+        }
+      } finally {
+        viewportRunningRef.current = false;
+        if (viewportDirtyRef.current) {
+          viewportRunningRef.current = true;
+          void runViewportLoop();
+        }
       }
-    });
+    }
+
+    void runViewportLoop();
   }, [
     renderer.terminalHeight,
     renderer.terminalWidth,
@@ -507,6 +549,7 @@ export function TablensApp({
     searchWholeWord,
     searchCaseSensitive,
     searchMatchRowCount,
+    columnFilterSelectionsByCol,
     source,
     sorter,
   ]);
@@ -899,45 +942,10 @@ export function TablensApp({
       return;
     }
 
-    if (key.name === "e" && state.selectionMode === "column") {
-      dispatch({ type: "ENTER_RENAME_COLUMN" });
-      return;
-    }
-
-    if ((key.name === "U" || (key.name === "u" && key.shift)) && state.selectionMode === "column") {
-      if (source.hasUnnestHistory() && !unnesting) {
-        setUnnesting(true);
-        dispatch({ type: "SET_VISIBLE_ROWS", rows: [] });
-        source.resetUnnest().then(() => {
-          dispatch({ type: "SET_HEADERS", headers: source.getHeaders() });
-          dispatch({ type: "SET_TOTAL_ROW_COUNT", count: source.getTotalRows() });
-          dispatch({ type: "SET_MATERIALIZED", isMaterialized: false });
-          dispatch({ type: "MOVE_UP", pageSize: 999999 });
-          lastRenderedOffset.current = -1;
-        }).catch((err) => {
-          console.error("Reset unnest failed:", err);
-        }).finally(() => {
-          setUnnesting(false);
-        });
-      }
-      return;
-    }
-
-    if (key.name === "u" && state.selectionMode === "column") {
-      const colName = headers[cursorCol];
-      if (colName && !unnesting) {
-        performUnnest(colName);
-      }
-      return;
-    }
-
-    if (key.name === "d" && state.selectionMode === "column") {
-      const colName = headers[cursorCol];
-      if (colName && !deleting) {
-        performDeleteColumn(colName);
-      }
-      return;
-    }
+    if (key.name === "e" && state.selectionMode === "column") return;
+    if ((key.name === "U" || (key.name === "u" && key.shift)) && state.selectionMode === "column") return;
+    if (key.name === "u" && state.selectionMode === "column") return;
+    if (key.name === "d" && state.selectionMode === "column") return;
 
     if (key.name === "s") {
       dispatch({
@@ -1151,9 +1159,7 @@ export function TablensApp({
             cursorCol={cursorCol}
             numCols={headers.length}
             loading={searchLoading}
-            isMaterialized={isMaterialized}
             sorting={sorting}
-            materializationInfo={materializationInfo}
           />
         ) : (
           <StatusLine
@@ -1168,10 +1174,8 @@ export function TablensApp({
             searchCaseSensitive={searchCaseSensitive}
             searchMatchRowCount={searchMatchRowCount}
             searchError={state.searchError}
-            isMaterialized={isMaterialized}
             sorting={sorting}
             selectionMode={selectionMode}
-            materializationInfo={materializationInfo}
           />
         )}
       </box>

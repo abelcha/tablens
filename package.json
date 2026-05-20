@@ -4,8 +4,8 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "bun run --watch src/index.tsx",
-    "tablens": "bun run src/tablens.tsx"
+    "dev": "bun run --watch index.ts",
+    "tablens": "bun run index.ts"
   },
   "devDependencies": {
     "@types/bun": "latest"

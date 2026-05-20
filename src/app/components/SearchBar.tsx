@@ -1,21 +1,6 @@
 /** @jsxImportSource @opentui/react */
 import { parseInlineMarkup } from "src/app/markup";
 
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return "0 B";
-  const k = 1024;
-  const sizes = ["B", "KB", "MB", "GB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))}${sizes[i]}`;
-}
-
-function formatNumber(n: number): string {
-  if (n >= 1_000_000_000) return (n / 1_000_000_000).toFixed(1).replace(/\.0$/, "") + "B";
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
-  if (n >= 1_000) return (n / 1_000).toFixed(1).replace(/\.0$/, "") + "K";
-  return String(n);
-}
-
 export function SearchBar({
   query,
   onInput,
@@ -30,9 +15,7 @@ export function SearchBar({
   cursorCol,
   numCols,
   loading,
-  isMaterialized = false,
   sorting = false,
-  materializationInfo,
 }: {
   query: string;
   onInput: (value: string) => void;
@@ -47,17 +30,9 @@ export function SearchBar({
   cursorCol: number;
   numCols: number;
   loading?: boolean;
-  isMaterialized?: boolean;
   sorting?: boolean;
-  materializationInfo?: { isMaterialized: boolean; skipped: boolean; fileSize: number; totalRows: number };
 }) {
-  const ramIndicator = sorting
-    ? "{yellow} ● Sorting... {/yellow}"
-    : isMaterialized
-      ? "{green} ● RAM {/green}"
-      : materializationInfo?.skipped
-        ? `{grey} ○ streaming ${formatBytes(materializationInfo.fileSize)} / ${formatNumber(materializationInfo.totalRows)} rows{/grey}`
-        : "{yellow} ○ initializing ... {/yellow}";
+  const statusIndicator = sorting ? "{yellow} ● Building view... {/yellow}" : "{grey} ● Indexed {/grey}";
   const countText =
     query.length === 0
       ? ""
@@ -103,7 +78,7 @@ export function SearchBar({
       />
       <text content={parseInlineMarkup(flagsMarkup)} />
       <text content={parseInlineMarkup(spinner)} width={1} />
-      <text content={parseInlineMarkup(ramIndicator)} />
+      <text content={parseInlineMarkup(statusIndicator)} />
     </box>
   );
 }

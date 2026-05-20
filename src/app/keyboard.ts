@@ -1,5 +1,5 @@
 import { type KeyEvent } from "@opentui/core";
-import { Action } from "src/app/actions";
+import type { Action } from "src/app/actions";
 import { appendFileSync } from "fs";
 
 export function keyToActions(key: KeyEvent, ctx: { pageSize: number }): Action[] {
@@ -48,7 +48,7 @@ export function keyToActions(key: KeyEvent, ctx: { pageSize: number }): Action[]
       break;
     case "left":
     case "h":
-      if (key.shift || key.name === "H") {
+      if (key.shift) {
         actions.push({ type: "TOGGLE_HELP" });
       } else {
         actions.push({ type: "MOVE_LEFT" });

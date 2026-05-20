@@ -30,7 +30,6 @@ export interface State {
   visibleRows: string[][];
   totalRowCount: number;
   headers: string[];
-  isMaterialized: boolean;
   showTypes: boolean;
   columnTypes: string[];
   showStats: boolean;
