@@ -1,5 +1,5 @@
 import type { StyledText } from "@opentui/core";
-import type { State, WrapMode, SelectionMode } from "src/types";
+import type { ColumnWidthMode, State, WrapMode, SelectionMode } from "src/types";
 import { computeColumnWidths, computeRowHeights } from "src/layout/calculator";
 import {
   buildHeaderLine,
@@ -37,7 +37,7 @@ export function computeTableContentModel(args: {
   columnTypes?: string[];
   showStats?: boolean;
   columnStats?: string[];
-  columnCompaction?: boolean;
+  columnWidthMode?: ColumnWidthMode;
   sortColumnInHeaders?: number;
   sortDirection?: "asc" | "desc";
 }): TableContentModel {
@@ -58,7 +58,7 @@ export function computeTableContentModel(args: {
     columnTypes,
     showStats,
     columnStats,
-    columnCompaction,
+    columnWidthMode,
     sortColumnInHeaders,
     sortDirection,
   } = args;
@@ -81,6 +81,7 @@ export function computeTableContentModel(args: {
     visibleRows.map((r) => r.slice(colsOffset)),
     tableW,
     adjustedOverrides,
+    columnWidthMode ?? "compact",
   );
 
   let usedWidth = 0;
@@ -168,7 +169,7 @@ export function computeTableContentModel(args: {
       gutterWidth,
       validSelectedColIdx,
       true,
-      columnCompaction ?? false,
+      false,
       sortedColIdx,
       sortDirection,
     ) +

@@ -62,7 +62,7 @@ export function keyToActions(key: KeyEvent, ctx: { pageSize: number }): Action[]
       actions.push({ type: "CYCLE_SELECTION_MODE" });
       break;
     case "c":
-      actions.push({ type: "TOGGLE_COLUMN_COMPACTION" });
+      actions.push({ type: "CYCLE_COLUMN_WIDTH_MODE" });
       break;
     case ">":
     case ".":

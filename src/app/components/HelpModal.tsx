@@ -10,7 +10,7 @@ export function HelpModal() {
 ├─ SEARCH & FILTER ────────────────────────────────┤
 │ /        Enter search mode                       │
 │ f        Column value filter (in column mode)    │
-│ c        Toggle column compaction (header text)  │
+│ c        Cycle column widths (cells→+headers→compact) │
 ├─ UI ─────────────────────────────────────────────┤
 │ H or ?   Show/hide this help                     │
 │ t        Toggle column type display              │

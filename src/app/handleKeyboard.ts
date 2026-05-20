@@ -349,15 +349,6 @@ export function handleTablensKey(key: KeyEvent, ctx: KeyboardContext): void {
     return;
   }
 
-  if (key.name === "x") {
-    dispatch({
-      type: "AUTO_RESIZE_COLUMNS",
-      headers: state.headers,
-      visibleRows: state.visibleRows,
-    });
-    return;
-  }
-
   if (key.name === "e" && state.selectionMode === "column") return;
   if ((key.name === "U" || (key.name === "u" && key.shift)) && state.selectionMode === "column")
     return;

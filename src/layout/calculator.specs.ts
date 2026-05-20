@@ -29,6 +29,26 @@ describe("Layout Calculator", () => {
       expect(widths).toEqual([6]);
     });
 
+    it("should use max sample length in fitCells mode", () => {
+      const headers = ["A"];
+      const short = "ab";
+      const long = "x".repeat(20);
+      const rows = Array.from({ length: 20 }, () => [short]).concat([[long]]);
+      const defaultWidth = computeColumnWidths(headers, rows, 500);
+      const fitWidth = computeColumnWidths(headers, rows, 500, {}, "fitCells");
+      expect(fitWidth[0]!).toBeGreaterThan(defaultWidth[0]!);
+      expect(fitWidth[0]!).toBe(20 + NUM_SPACES_BETWEEN_COLUMNS);
+    });
+
+    it("should include column header length in fitCellsAndHeaders mode", () => {
+      const headers = ["VeryLongColumnHeader"];
+      const rows = [["a"], ["b"]];
+      const cellsOnly = computeColumnWidths(headers, rows, 500, {}, "fitCells");
+      const withHeaders = computeColumnWidths(headers, rows, 500, {}, "fitCellsAndHeaders");
+      expect(withHeaders[0]!).toBeGreaterThan(cellsOnly[0]!);
+      expect(withHeaders[0]!).toBe(headers[0]!.length + NUM_SPACES_BETWEEN_COLUMNS);
+    });
+
     it("should clip columns and redistribute available space", () => {
       const tableWidth = 60;
       const maxCol = Math.floor(tableWidth * 0.3); // 18

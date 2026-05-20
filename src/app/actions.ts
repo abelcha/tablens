@@ -23,7 +23,6 @@ export type Action =
   | { type: "SET_SEARCH_ERROR"; error: string | null }
   | { type: "SET_LOAD_ERROR"; error: string | null }
   | { type: "SORT"; direction: "asc" | "desc" }
-  | { type: "AUTO_RESIZE_COLUMNS"; headers: string[]; visibleRows: string[][] }
   | { type: "ENTER_RENAME_COLUMN" }
   | { type: "EXIT_RENAME_COLUMN" }
   | { type: "SET_RENAME_QUERY"; query: string }
@@ -48,7 +47,8 @@ export type Action =
     rowsOffset: number;
   }
   | { type: "TOGGLE_HELP" }
-  | { type: "TOGGLE_COLUMN_COMPACTION" }
+  | { type: "CYCLE_COLUMN_WIDTH_MODE" }
+  | { type: "CLEAR_SCROLL_SPEED" }
     | { type: "ENTER_COL_SEARCH" }
     | { type: "EXIT_COL_SEARCH" }
   | { type: "SET_COL_SEARCH_QUERY"; query: string }

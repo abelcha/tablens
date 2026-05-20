@@ -17,7 +17,7 @@ import {
   computeTableContentModel,
 } from "src/app/render";
 import { initialState, reducer } from "src/app/state";
-import { computeViewportPatch } from "src/app/viewport";
+import { computeViewportPatch, trySyncViewportPatch } from "src/app/viewport";
 import { SearchBar } from "src/app/components/SearchBar";
 import { ColSearchBar } from "src/app/components/ColSearchBar";
 import { StatusLine } from "src/app/components/StatusLine";
@@ -142,6 +142,8 @@ export function TablensApp({
     columnFilterSelectionsByCol,
     columnFilterSearchActive,
     columnFilterSearchQuery,
+    scrollRowsPerSec,
+    scrollBenchAt,
   } = state;
 
   const filteredColumnFilterData = useMemo(() => {
@@ -470,10 +472,10 @@ export function TablensApp({
     performSearch,
   ]);
 
+  // Viewport: prefer sync slice from PageWindowCache; async getPage uses file_row_number index only
+  // (see Engine.ts — never materialize full rows into indexed tables for scroll perf).
   useEffect(() => {
     if (headers.length === 0) return;
-
-    dispatch({ type: "SET_VIEWPORT_PENDING", pending: true });
 
     const consoleHeight =
       renderer.console.visible && renderer.console.bounds?.height
@@ -481,11 +483,36 @@ export function TablensApp({
         : 0;
     const tableH = Math.max(1, renderer.terminalHeight - 1 - consoleHeight);
     const tableW = renderer.terminalWidth;
+    const viewportState = { ...state, searchQuery: appliedSearchQuery };
+
+    // Fast path — no DuckDB; keeps rowsOffset and visibleRows in sync when still inside cache.
+    const syncPatch = trySyncViewportPatch({
+      state: viewportState,
+      termH: tableH,
+      lastRenderedQuery: lastRenderedQuery.current,
+      lastRenderedUseRegex: lastRenderedUseRegex.current,
+      lastRenderedWholeWord: lastRenderedWholeWord.current,
+      lastRenderedCaseSensitive: lastRenderedCaseSensitive.current,
+      lastRenderedSorter: lastRenderedSorter.current,
+      lastRenderedFilters: lastRenderedFilters.current,
+      pageCache: pageCache.current,
+    });
+
+    if (syncPatch) {
+      const requestId = ++lastViewportRequestId.current;
+      pageCache.current = syncPatch.pageCache;
+      lastRenderedOffset.current = syncPatch.rowsOffset;
+      dispatch({ type: "APPLY_VIEWPORT_PATCH", patch: syncPatch, requestId });
+      return;
+    }
+
+    dispatch({ type: "SET_VIEWPORT_PENDING", pending: true });
+
     const requestId = ++lastViewportRequestId.current;
 
     viewportSnapshotRef.current = {
       requestId,
-      state: { ...state, searchQuery: appliedSearchQuery },
+      state: viewportState,
       termW: tableW,
       termH: tableH,
       source,
@@ -579,6 +606,17 @@ export function TablensApp({
     sorter,
   ]);
 
+  useEffect(() => {
+    if (scrollRowsPerSec === null) return;
+    const idleMs = 500;
+    const remaining = idleMs - (performance.now() - scrollBenchAt);
+    const timeout = setTimeout(
+      () => dispatch({ type: "CLEAR_SCROLL_SPEED" }),
+      Math.max(0, remaining),
+    );
+    return () => clearTimeout(timeout);
+  }, [scrollRowsPerSec, scrollBenchAt]);
+
   // Refresh search when flags change (if there's a search query)
   useEffect(() => {
     // If the box has content, we want to refresh search with new flags
@@ -665,7 +703,7 @@ export function TablensApp({
       columnTypes: dispTypes,
       showStats: state.showStats,
       columnStats: dispStats,
-      columnCompaction: state.columnCompaction,
+      columnWidthMode: state.columnWidthMode,
       sortColumnInHeaders:
         sortColumnInHeaders !== undefined && sortColumnInHeaders >= 0
           ? sortColumnInHeaders
@@ -687,7 +725,7 @@ export function TablensApp({
     state.columnTypes,
     state.showStats,
     state.columnStats,
-    state.columnCompaction,
+    state.columnWidthMode,
     state.sorter,
     filteredColIndices,
     renderer.terminalWidth,
@@ -899,6 +937,7 @@ export function TablensApp({
             searchError={state.searchError}
             sorting={sorting}
             selectionMode={selectionMode}
+            scrollRowsPerSec={scrollRowsPerSec}
           />
         )}
       </box>

@@ -1,4 +1,4 @@
-import type { WrapMode } from "src/types";
+import type { ColumnWidthMode, WrapMode } from "src/types";
 import { wrapText, NUM_SPACES_BETWEEN_COLUMNS } from "src/utils/text";
 
 export const MAX_COLUMN_WIDTH_FRACTION = 0.3;
@@ -24,12 +24,14 @@ export function computeColumnWidths(
   rows: string[][],
   tableWidth: number,
   columnOverrides: Record<number, number> = {},
+  columnWidthMode: ColumnWidthMode = "compact",
 ) {
   const sampleSize = Math.min(200, rows.length);
   const sampleRows = rows.slice(0, sampleSize);
 
   const columnWidthsData: number[][] = headers.map((h, i) => {
     if (columnOverrides[i] !== undefined) return [];
+    if (columnWidthMode === "fitCells") return [];
     return [h.length];
   });
 
@@ -51,6 +53,13 @@ export function computeColumnWidths(
     }
     if (widths.length === 0) {
       return Math.max(headers[i]?.length || 0, MIN_COLUMN_WIDTH);
+    }
+    if (columnWidthMode === "fitCells" || columnWidthMode === "fitCellsAndHeaders") {
+      const contentMax = widths.length === 0 ? 0 : Math.max(...widths);
+      if (columnWidthMode === "fitCellsAndHeaders") {
+        return Math.max(contentMax, headers[i]?.length || 0, MIN_COLUMN_WIDTH);
+      }
+      return Math.max(contentMax, MIN_COLUMN_WIDTH);
     }
     const sorted = [...widths].sort((a, b) => a - b);
     const p50 = percentile(sorted, 0.5);

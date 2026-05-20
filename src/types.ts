@@ -7,6 +7,9 @@ export type WrapMode = "chars" | "words" | "disabled";
 
 export type SelectionMode = "row" | "column" | "cell";
 
+/** compact = p50/p90 sample; fitCells = max cell; fitCellsAndHeaders = max cell + column name */
+export type ColumnWidthMode = "compact" | "fitCells" | "fitCellsAndHeaders";
+
 export interface State {
   rowsOffset: number;
   colsOffset: number;
@@ -35,7 +38,7 @@ export interface State {
   showStats: boolean;
   columnStats: string[];
   showHelp: boolean;
-  columnCompaction: boolean;
+  columnWidthMode: ColumnWidthMode;
   colSearchActive: boolean;
   colSearchQuery: string;
   showColumnFilter: boolean;

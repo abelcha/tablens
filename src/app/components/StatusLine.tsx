@@ -14,7 +14,8 @@ export function StatusLine({
   searchMatchRowCount = null,
   searchError = null,
   sorting = false,
-  selectionMode = "row",
+  selectionMode = "column",
+  scrollRowsPerSec = null,
 }: {
   file: string;
   cursorRow: number;
@@ -29,7 +30,12 @@ export function StatusLine({
   searchError?: string | null;
   sorting?: boolean;
   selectionMode?: string;
+  scrollRowsPerSec?: number | null;
 }) {
+  const formatScrollSpeed = (rowsPerSec: number) => {
+    if (rowsPerSec >= 1000) return `${(rowsPerSec / 1000).toFixed(1)}k`;
+    return String(Math.round(rowsPerSec));
+  };
   const filterLabel =
     searchQuery.length > 0
       ? ` | Filter: /${searchQuery}/` +
@@ -40,7 +46,9 @@ export function StatusLine({
       : "";
   const errorLabel = searchError ? ` | Error: ${searchError}` : "";
   const modeLabel = `{bold}[${selectionMode.toUpperCase()}]{/bold}`;
-  const content = `${modeLabel} ${file} [Row ${cursorRow + 1}/${totalRowCount}, Col ${cursorCol + 1}/${numCols}]${filterLabel}${errorLabel}`;
+  const scrollLabel =
+    scrollRowsPerSec !== null ? ` | ${formatScrollSpeed(scrollRowsPerSec)} rows/s` : "";
+  const content = `${modeLabel} ${file} [Row ${cursorRow + 1}/${totalRowCount}, Col ${cursorCol + 1}/${numCols}]${scrollLabel}${filterLabel}${errorLabel}`;
 
   return (
     <box flexDirection="row" width="100%" height={1}>
