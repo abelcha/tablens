@@ -27,7 +27,7 @@ export interface State {
   searchMatchRowCount: number | null;
   searchError: string | null;
   visibleMatches: boolean[][];
-  sorter: any;
+  sorter: { column: number; direction: "asc" | "desc"; nulls: "last" | "first" } | null;
   wrapMode: WrapMode;
   columnOverrides: Record<number, number>;
   visibleRows: string[][];

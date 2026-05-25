@@ -442,21 +442,16 @@ export class Engine implements TablensEngine {
    */
   async buildView(spec: ViewSpec): Promise<ViewHandle> {
     this.ensureReady();
-    const normalized: ViewSpec = {
-      sort: spec.sort.slice(),
-      filter: { ...spec.filter },
-      search: spec.search ? { ...spec.search, columns: spec.search.columns?.slice() } : null,
-    };
     const hash = hashViewInput({
       source: this.sourceFingerprint!,
-      sort: normalized.sort,
-      filter: normalized.filter,
-      search: normalized.search,
+      sort: spec.sort,
+      filter: spec.filter,
+      search: spec.search ? { ...spec.search, columns: spec.search.columns?.slice() } : null,
     });
     const tableName = `indexed_${hash}`;
     const existing = this.viewCache.get(hash);
     if (existing) {
-      this.currentViewSpec = normalized;
+      this.currentViewSpec = spec;
       this.currentViewHandle = existing;
       return existing;
     }
@@ -467,11 +462,11 @@ export class Engine implements TablensEngine {
       CREATE TABLE IF NOT EXISTS ${tableName} AS
       SELECT file_row_number
       FROM read_parquet(${this.sqlLiteral(this.activeParquetPath)}, file_row_number=true)
-      WHERE ${this.buildFilterClause(normalized.filter)}
-        AND ${this.buildSearchPredicate(normalized.search)}
-      ${normalized.sort.length > 0
-        ? `ORDER BY ${normalized.sort
-            .map((spec) => `${this.quoteIdent(spec.column)} ${spec.direction.toUpperCase()} NULLS ${(spec.nulls ?? "last").toUpperCase()}`)
+      WHERE ${this.buildFilterClause(spec.filter)}
+        AND ${this.buildSearchPredicate(spec.search)}
+      ${spec.sort.length > 0
+        ? `ORDER BY ${spec.sort
+            .map((s) => `${this.quoteIdent(s.column)} ${s.direction.toUpperCase()} NULLS ${(s.nulls ?? "last").toUpperCase()}`)
             .join(", ")}, file_row_number`
         : `ORDER BY file_row_number`}
     `);
@@ -484,7 +479,7 @@ export class Engine implements TablensEngine {
       buildTimeMs: Date.now() - buildStarted,
     };
 
-    this.currentViewSpec = normalized;
+    this.currentViewSpec = spec;
     this.currentViewHandle = handle;
     this.viewCache.set(hash, handle);
     return handle;

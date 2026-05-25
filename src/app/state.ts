@@ -257,15 +257,50 @@ export function reducer(state: ExtendedState, action: Action): ExtendedState {
       };
     case "SORT": {
       if (state.selectionMode !== "column") return state;
-      const togglingOff =
+
+      // Cycle nulls position: nulls last → nulls first → nulls last on repeat
+      const cycleNulls = (
+        current: "last" | "first" | undefined
+      ): "last" | "first" => {
+        if (current === undefined || current === "last") return "first";
+        return "last";
+      };
+
+      // Check if toggling off (same column + direction)
+      const sameColumnDirection =
         state.sorter !== null &&
         state.sorter.column === state.cursorCol &&
         state.sorter.direction === action.direction;
+
+      if (sameColumnDirection) {
+        // Cycle the nulls position, or clear sort if we've cycled back to nulls last
+        if (state.sorter.nulls === "first") {
+          return {
+            ...state,
+            sorter: null,
+            rowsOffset: 0,
+            cursorRow: 0,
+          };
+        }
+        return {
+          ...state,
+          sorter: {
+            column: state.sorter.column,
+            direction: state.sorter.direction,
+            nulls: cycleNulls(state.sorter.nulls),
+          },
+          rowsOffset: 0,
+          cursorRow: 0,
+        };
+      }
+
       return {
         ...state,
-        sorter: togglingOff
-          ? null
-          : { column: state.cursorCol, direction: action.direction },
+        sorter: {
+          column: state.cursorCol,
+          direction: action.direction,
+          nulls: "last",
+        },
         rowsOffset: 0,
         cursorRow: 0,
       };

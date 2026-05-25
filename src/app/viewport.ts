@@ -143,6 +143,7 @@ function buildViewSpec(state: State): ViewSpec {
           {
             column: state.headers[state.sorter.column]!,
             direction: state.sorter.direction,
+            nulls: state.sorter.nulls,
           },
         ]
       : [];
