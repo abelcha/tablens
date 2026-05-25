@@ -1,8 +1,13 @@
 {
-  "name": "stasher",
+  "name": "tablens",
   "module": "src/index.tsx",
   "type": "module",
   "private": true,
+  "exports": {
+    ".": "./src/index.tsx",
+    "./engine": "./src/engine/index.ts",
+    "./package.json": "./package.json"
+  },
   "scripts": {
     "dev": "bun run --watch index.ts",
     "tablens": "bun run index.ts"

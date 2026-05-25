@@ -1,4 +1,4 @@
-import type { EngineInput } from "src/engine/types";
+import type { EngineInput } from "./types";
 
 export function buildEngineInput(file: string, query?: string) {
   const sqlForFile =
