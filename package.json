@@ -6,6 +6,11 @@
   "exports": {
     ".": "./src/index.tsx",
     "./engine": "./src/engine/index.ts",
+    "./engine/*": "./src/engine/*",
+    "./app/*": "./src/app/*",
+    "./layout/*": "./src/layout/*",
+    "./utils/*": "./src/utils/*",
+    "./*": "./src/*",
     "./package.json": "./package.json"
   },
   "scripts": {
