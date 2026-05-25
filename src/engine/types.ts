@@ -138,6 +138,7 @@ export interface TablensEngine {
   getColumnValueDistribution(
     request: ColumnDistributionRequest,
   ): Promise<ColumnDistributionResult>;
+  getColumnP80ValueLengths?(sampleSize?: number): Promise<Record<string, number>>;
   exportView(request: ExportRequest): Promise<void>;
   close(): Promise<void>;
 }

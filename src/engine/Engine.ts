@@ -351,11 +351,14 @@ export class Engine implements TablensEngine {
   }
 
   private async loadSchema(): Promise<void> {
+    console.log("loadSchema", this.activeParquetPath);
     if (!this.executor || !this.sourceFingerprint) {
       throw new Error("Engine is not open");
     }
     const query = `DESCRIBE SELECT * FROM read_parquet(${this.sqlLiteral(this.activeParquetPath)}, file_row_number=true)`;
+    console.time(query)
     const result = await this.executor.run(query);
+    console.timeEnd(query)
     const columns: string[] = [];
     const types: string[] = [];
     for (const row of result.rows) {
@@ -770,6 +773,39 @@ export class Engine implements TablensEngine {
     if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}m`;
     if (n >= 1_000) return `${(n / 1_000).toFixed(1).replace(/\.0$/, "")}k`;
     return String(n);
+  }
+
+  async getColumnP80ValueLengths(sampleSize = 1000): Promise<Record<string, number>> {
+    this.ensureReady();
+    const safeSampleSize = Math.max(1, Math.min(100_000, Math.floor(sampleSize)));
+    const result = await this.executor!.run(`
+      WITH sampled AS (
+        FROM read_parquet(${this.sqlLiteral(this.activeParquetPath)})
+        USING SAMPLE ${safeSampleSize}
+      ),
+      long AS (
+        UNPIVOT sampled
+        ON COLUMNS(*)::VARCHAR
+        INTO NAME name VALUE value
+      )
+      SELECT
+        name,
+        COALESCE(
+          reservoir_quantile(length(value), 0.8, 256)
+          FILTER (WHERE length(value) > 0),
+          0
+        )::INT AS p80Len
+      FROM long
+      GROUP BY name
+    `);
+
+    const lengths: Record<string, number> = {};
+    for (const row of result.rows) {
+      const name = String(row[0] ?? "");
+      if (!name || name === "file_row_number") continue;
+      lengths[name] = Math.max(0, Number(row[1] ?? 0));
+    }
+    return lengths;
   }
 
   async getColumnValueDistribution(
