@@ -1,7 +1,10 @@
 import { type KeyEvent } from "@opentui/core";
 import type { Action } from "src/app/actions";
 
-export function keyToActions(key: KeyEvent, ctx: { pageSize: number }): Action[] {
+export function keyToActions(
+  key: KeyEvent,
+  ctx: { pageSize: number; visibleColumnIndices?: number[] },
+): Action[] {
   const actions: Action[] = [];
 
   switch (key.name) {
@@ -45,12 +48,12 @@ export function keyToActions(key: KeyEvent, ctx: { pageSize: number }): Action[]
       if (key.shift) {
         actions.push({ type: "TOGGLE_HELP" });
       } else {
-        actions.push({ type: "MOVE_LEFT" });
+        actions.push({ type: "MOVE_LEFT", visibleColumns: ctx.visibleColumnIndices });
       }
       break;
     case "right":
     case "l":
-      actions.push({ type: "MOVE_RIGHT" });
+      actions.push({ type: "MOVE_RIGHT", visibleColumns: ctx.visibleColumnIndices });
       break;
     case "pageup":
       actions.push({ type: "PAGE_UP", pageSize: ctx.pageSize });

@@ -12,20 +12,31 @@ export interface HeaderOverlay {
 }
 
 export function computeHeaderOverlay(args: {
-  state: State;
+  selectionMode: State["selectionMode"];
+  selectedColIndex?: number;
+  sortColumnIndex?: number;
+  sortDirection?: "asc" | "desc";
   colWidths: number[];
   gutterWidth: number;
   dispHeaders: string[];
   colsOffset: number;
 }): HeaderOverlay {
-  const { state, colWidths, gutterWidth, dispHeaders, colsOffset } = args;
-  const { selectionMode, cursorCol } = state;
+  const {
+    selectionMode,
+    selectedColIndex,
+    sortColumnIndex,
+    sortDirection,
+    colWidths,
+    gutterWidth,
+    dispHeaders,
+    colsOffset,
+  } = args;
 
-  if (selectionMode !== "column" || cursorCol === undefined) {
+  if (selectionMode !== "column" || selectedColIndex === undefined) {
     return { visible: false };
   }
 
-  const relC = cursorCol - colsOffset;
+  const relC = selectedColIndex - colsOffset;
   if (relC < 0 || relC >= colWidths.length || relC >= dispHeaders.length) {
     return { visible: false };
   }
@@ -35,9 +46,8 @@ export function computeHeaderOverlay(args: {
     return { visible: false };
   }
 
-  const sorter = state.sorter;
-  if (sorter && sorter.column === cursorCol) {
-    headerText += sorter.direction === "asc" ? " ▲" : " ▼";
+  if (sortColumnIndex !== undefined && sortColumnIndex === selectedColIndex && sortDirection) {
+    headerText += sortDirection === "asc" ? " ▲" : " ▼";
   }
 
   const overlayPadding = 1;

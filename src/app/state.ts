@@ -21,6 +21,55 @@ type ExtendedState = State & {
   loadError: string | null;
 };
 
+function defaultColumnOrder(length: number): number[] {
+  return Array.from({ length }, (_, index) => index);
+}
+
+function normalizeColumnOrder(order: number[], length: number): number[] {
+  const seen = new Set<number>();
+  const next: number[] = [];
+  for (const columnIndex of order) {
+    if (columnIndex < 0 || columnIndex >= length || seen.has(columnIndex)) continue;
+    seen.add(columnIndex);
+    next.push(columnIndex);
+  }
+  for (let i = 0; i < length; i++) {
+    if (!seen.has(i)) next.push(i);
+  }
+  return next;
+}
+
+function visibleColumnIndices(order: number[], hiddenColumns: Set<number>): number[] {
+  return order.filter((columnIndex) => !hiddenColumns.has(columnIndex));
+}
+
+function clampManagerCursor(
+  cursor: number,
+  order: number[],
+): number {
+  if (order.length === 0) return 0;
+  return Math.max(0, Math.min(order.length - 1, cursor));
+}
+
+function ensureVisibleCursorColumn(state: ExtendedState): number {
+  const visible = visibleColumnIndices(state.columnOrder, state.hiddenColumns);
+  if (visible.length === 0) return state.cursorCol;
+  if (visible.includes(state.cursorCol)) return state.cursorCol;
+
+  const currentOrderIdx = state.columnOrder.indexOf(state.cursorCol);
+  if (currentOrderIdx < 0) return visible[0]!;
+
+  for (let i = currentOrderIdx - 1; i >= 0; i--) {
+    const candidate = state.columnOrder[i]!;
+    if (!state.hiddenColumns.has(candidate)) return candidate;
+  }
+  for (let i = currentOrderIdx + 1; i < state.columnOrder.length; i++) {
+    const candidate = state.columnOrder[i]!;
+    if (!state.hiddenColumns.has(candidate)) return candidate;
+  }
+  return visible[0]!;
+}
+
 export function initialState(): ExtendedState {
   return {
     rowsOffset: 0,
@@ -30,6 +79,11 @@ export function initialState(): ExtendedState {
     numFreezeCols: 0,
     selectionMode: "column",
     markedRows: new Set(),
+    visibleRowIds: [],
+    columnOrder: [],
+    hiddenColumns: new Set(),
+    columnManagerActive: false,
+    columnManagerCursor: 0,
     found: [],
     searchActive: false,
     searchQuery: "",
@@ -167,7 +221,17 @@ export function reducer(state: ExtendedState, action: Action): ExtendedState {
       if (state.selectionMode === "row") {
         next.colsOffset = Math.max(0, state.colsOffset - 1);
       } else {
-        next.cursorCol = Math.max(0, state.cursorCol - 1);
+        const columns =
+          action.visibleColumns !== undefined
+            ? action.visibleColumns.filter((idx) => idx >= 0 && idx < state.headers.length)
+            : state.headers.map((_, index) => index);
+        if (columns.length === 0) return state;
+        const currentIndex = columns.indexOf(state.cursorCol);
+        if (currentIndex > 0) {
+          next.cursorCol = columns[currentIndex - 1]!;
+        } else {
+          next.cursorCol = columns[0] ?? 0;
+        }
       }
       return acceptViewportScroll(state, next);
     }
@@ -176,7 +240,17 @@ export function reducer(state: ExtendedState, action: Action): ExtendedState {
       if (state.selectionMode === "row") {
         next.colsOffset = Math.min(state.headers.length - 1, state.colsOffset + 1);
       } else {
-        next.cursorCol = Math.min(state.headers.length - 1, state.cursorCol + 1);
+        const columns =
+          action.visibleColumns !== undefined
+            ? action.visibleColumns.filter((idx) => idx >= 0 && idx < state.headers.length)
+            : state.headers.map((_, index) => index);
+        if (columns.length === 0) return state;
+        const currentIndex = columns.indexOf(state.cursorCol);
+        if (currentIndex >= 0 && currentIndex < columns.length - 1) {
+          next.cursorCol = columns[currentIndex + 1]!;
+        } else {
+          next.cursorCol = columns[columns.length - 1] ?? state.cursorCol;
+        }
       }
       return acceptViewportScroll(state, next);
     }
@@ -252,6 +326,9 @@ export function reducer(state: ExtendedState, action: Action): ExtendedState {
         loadError: action.error,
         viewportPending: false,
         visibleRows: [],
+        visibleRowIds: [],
+        columnManagerActive: false,
+        markedRows: new Set(),
         headers: action.error ? [] : state.headers,
         totalRowCount: action.error ? 0 : state.totalRowCount,
       };
@@ -305,6 +382,84 @@ export function reducer(state: ExtendedState, action: Action): ExtendedState {
         cursorRow: 0,
       };
     }
+    case "OPEN_COLUMN_MANAGER": {
+      const cursor = state.columnOrder.indexOf(state.cursorCol);
+      return {
+        ...state,
+        columnManagerActive: true,
+        columnManagerCursor: cursor >= 0 ? cursor : 0,
+      };
+    }
+    case "CLOSE_COLUMN_MANAGER":
+      return { ...state, columnManagerActive: false };
+    case "MOVE_COLUMN_MANAGER_CURSOR": {
+      const visibleOrder = state.columnOrder.filter((columnIndex) => !state.hiddenColumns.has(columnIndex));
+      const maxCursor = Math.max(0, state.columnOrder.length - 1);
+      const nextCursor = Math.max(0, Math.min(maxCursor, state.columnManagerCursor + action.delta));
+      if (visibleOrder.length === 0) {
+        return { ...state, columnManagerCursor: nextCursor };
+      }
+      return { ...state, columnManagerCursor: nextCursor };
+    }
+    case "MOVE_COLUMN_IN_LAYOUT": {
+      const cursor = clampManagerCursor(state.columnManagerCursor, state.columnOrder);
+      const nextOrder = [...state.columnOrder];
+      const target = cursor + action.delta;
+      if (target < 0 || target >= nextOrder.length) {
+        return { ...state, columnManagerCursor: cursor };
+      }
+      [nextOrder[cursor], nextOrder[target]] = [nextOrder[target]!, nextOrder[cursor]!];
+      const nextState = {
+        ...state,
+        columnOrder: nextOrder,
+        columnManagerCursor: target,
+      };
+      return {
+        ...nextState,
+        cursorCol: ensureVisibleCursorColumn(nextState),
+      };
+    }
+    case "TOGGLE_COLUMN_HIDDEN": {
+      const selected = state.columnOrder[state.columnManagerCursor];
+      if (selected === undefined) return state;
+      const hiddenColumns = new Set(state.hiddenColumns);
+      if (hiddenColumns.has(selected)) hiddenColumns.delete(selected);
+      else hiddenColumns.add(selected);
+      const nextState = {
+        ...state,
+        hiddenColumns,
+      };
+      return {
+        ...nextState,
+        cursorCol: ensureVisibleCursorColumn(nextState),
+      };
+    }
+    case "RESET_COLUMN_LAYOUT": {
+      const columnOrder = defaultColumnOrder(state.headers.length);
+      const hiddenColumns = new Set<number>();
+      const nextState = {
+        ...state,
+        columnOrder,
+        hiddenColumns,
+        columnManagerCursor: clampManagerCursor(state.columnManagerCursor, columnOrder),
+      };
+      return {
+        ...nextState,
+        cursorCol: ensureVisibleCursorColumn(nextState),
+      };
+    }
+    case "TOGGLE_MARK_ROW": {
+      if (action.rowId < 0) return state;
+      const markedRows = new Set(state.markedRows);
+      if (markedRows.has(action.rowId)) {
+        markedRows.delete(action.rowId);
+      } else {
+        markedRows.add(action.rowId);
+      }
+      return { ...state, markedRows };
+    }
+    case "CLEAR_MARKED_ROWS":
+      return { ...state, markedRows: new Set() };
     case "SET_TOTAL_ROW_COUNT": {
       const maxRows = state.searchMatchRowCount !== null ? state.searchMatchRowCount : action.count;
       return {
@@ -324,7 +479,18 @@ export function reducer(state: ExtendedState, action: Action): ExtendedState {
         viewportPending: true,
       };
     case "SET_HEADERS":
-      return { ...state, headers: action.headers, columnTypes: [], columnStats: [] };
+      return {
+        ...state,
+        headers: action.headers,
+        columnTypes: [],
+        columnStats: [],
+        columnOrder: defaultColumnOrder(action.headers.length),
+        hiddenColumns: new Set(),
+        columnManagerCursor: 0,
+        columnManagerActive: false,
+        markedRows: new Set(),
+        cursorCol: action.headers.length === 0 ? 0 : Math.min(state.cursorCol, action.headers.length - 1),
+      };
     case "SET_VIEWPORT_PENDING":
       return { ...state, viewportPending: action.pending };
     case "APPLY_VIEWPORT_PATCH":
@@ -421,7 +587,7 @@ export function reducer(state: ExtendedState, action: Action): ExtendedState {
     case "CLOSE_QUERY_EDITOR":
       return { ...state, queryEditorActive: false };
     case "SET_VISIBLE_ROWS":
-      return { ...state, visibleRows: action.rows };
+      return { ...state, visibleRows: action.rows, visibleRowIds: action.rowIds ?? [] };
     case "TOGGLE_SHOW_TYPES":
       return { ...state, showTypes: !state.showTypes };
     case "SET_COLUMN_TYPES":

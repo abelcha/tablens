@@ -58,7 +58,7 @@ export type ViewHashInput = {
 
 export type EngineInput =
   | { kind: "parquet"; path: string }
-  | { kind: "csv"; path: string }
+  | { kind: "file"; path: string }
   | { kind: "query"; sql: string; basePath?: string };
 
 export type EngineSchema = {
@@ -93,6 +93,7 @@ export type PageResult = {
   offset: number;
   limit: number;
   totalRows: number;
+  rowIds: number[];
   rows: string[][];
   columns: string[];
   matches?: boolean[][];
@@ -106,6 +107,7 @@ export type ExportRequest = {
   outPath: string;
   format: ExportFormat;
   columns?: string[];
+  rowIds?: number[];
 };
 
 export type ColumnDistributionRequest = {

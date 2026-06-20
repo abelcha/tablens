@@ -287,14 +287,18 @@ export function buildRowLine(
   rowNumber?: number,
   gutterWidth: number = 0,
   matches?: boolean[],
+  marked: boolean = false,
 ) {
   let line = "";
 
   if (gutterWidth > 0) {
     if (lineIdx === 0 && rowNumber !== undefined) {
+      const markerWidth = 1;
+      const rowNumberWidth = Math.max(0, gutterWidth - markerWidth);
       const numStr = String(rowNumber);
-      const pad = " ".repeat(Math.max(0, gutterWidth - numStr.length));
-      line += `{blue}${numStr}{/blue}${pad}{blue}│{/blue} `;
+      const pad = " ".repeat(Math.max(0, rowNumberWidth - numStr.length));
+      const marker = marked ? "{green}*{/green}" : " ";
+      line += `${marker}{blue}${numStr}{/blue}${pad}{blue}│{/blue} `;
     } else {
       line += " ".repeat(gutterWidth) + `{blue}│{/blue} `;
     }

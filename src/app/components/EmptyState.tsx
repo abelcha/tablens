@@ -7,7 +7,7 @@ export function EmptyState({
   query,
   message,
 }: {
-  type: "loading" | "no-results" | "empty-file" | "error";
+  type: "loading" | "no-results" | "empty-file" | "error" | "no-columns";
   query?: string;
   message?: string;
 }) {
@@ -37,6 +37,12 @@ export function EmptyState({
     sub = "This dataset contains {white}no rows{/white} of data";
     icon = "□";
     iconColor = "#FFFF00";
+  } else if (type === "no-columns") {
+    title = "No visible columns";
+    sub = "Open {white}{bold}I{/bold}{/white} to restore or show columns";
+    footer = " Press I to manage columns · q to quit ";
+    icon = "▤";
+    iconColor = "#58A6FF";
   }
 
   return (

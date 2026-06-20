@@ -15,6 +15,7 @@ export function StatusLine({
   searchError = null,
   sorting = false,
   selectionMode = "column",
+  markedCount = 0,
   scrollRowsPerSec = null,
 }: {
   file: string;
@@ -30,6 +31,7 @@ export function StatusLine({
   searchError?: string | null;
   sorting?: boolean;
   selectionMode?: string;
+  markedCount?: number;
   scrollRowsPerSec?: number | null;
 }) {
   const formatScrollSpeed = (rowsPerSec: number) => {
@@ -45,10 +47,11 @@ export function StatusLine({
         (searchMatchRowCount !== null ? ` [${searchMatchRowCount} rows]` : "")
       : "";
   const errorLabel = searchError ? ` | Error: ${searchError}` : "";
+  const markedLabel = markedCount > 0 ? ` | Saved: ${markedCount}` : "";
   const modeLabel = `{bold}[${selectionMode.toUpperCase()}]{/bold}`;
   const scrollLabel =
     scrollRowsPerSec !== null ? ` | ${formatScrollSpeed(scrollRowsPerSec)} rows/s` : "";
-  const content = `${modeLabel} ${file} [Row ${cursorRow + 1}/${totalRowCount}, Col ${cursorCol + 1}/${numCols}]${scrollLabel}${filterLabel}${errorLabel}`;
+  const content = `${modeLabel} ${file} [Row ${cursorRow + 1}/${totalRowCount}, Col ${cursorCol + 1}/${numCols}]${markedLabel}${scrollLabel}${filterLabel}${errorLabel}`;
 
   return (
     <box flexDirection="row" width="100%" height={1}>

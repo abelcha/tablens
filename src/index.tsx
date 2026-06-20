@@ -27,6 +27,7 @@ import { SavePathBar } from "src/app/components/SavePathBar";
 import { QueryEditor } from "src/app/components/QueryEditor";
 import { HelpModal } from "src/app/components/HelpModal";
 import { ColumnFilterModal } from "src/app/components/ColumnFilterModal";
+import { ColumnManagerModal } from "src/app/components/ColumnManagerModal";
 import { parseInlineMarkup } from "src/app/markup";
 import { formatError } from "src/utils/error";
 import type { PageWindowCache } from "src/app/viewport";
@@ -119,7 +120,13 @@ export function TablensApp({
     selectionMode,
     wrapMode,
     visibleRows,
+    visibleRowIds,
     visibleMatches,
+    markedRows,
+    columnOrder,
+    hiddenColumns,
+    columnManagerActive,
+    columnManagerCursor,
     columnOverrides,
     searchActive,
     searchQuery,
@@ -178,10 +185,49 @@ export function TablensApp({
   );
   const visibleColumnFilterCursor = activeColumnFilterCursor - columnFilterWindowStart;
 
+  const orderedColumnIndices = useMemo(() => {
+    const canonicalOrder =
+      columnOrder.length === headers.length
+        ? columnOrder
+        : headers.map((_, index) => index);
+    return canonicalOrder.filter((columnIndex) => columnIndex >= 0 && columnIndex < headers.length);
+  }, [columnOrder, headers]);
+
+  const visibleLayoutColumnIndices = useMemo(
+    () => orderedColumnIndices.filter((columnIndex) => !hiddenColumns.has(columnIndex)),
+    [orderedColumnIndices, hiddenColumns],
+  );
+  const visibleLayoutColumnNames = useMemo(
+    () => visibleLayoutColumnIndices.map((i) => headers[i]!).filter(Boolean),
+    [visibleLayoutColumnIndices, headers],
+  );
+
+  const columnManagerHeight = Math.max(24, Math.min(40, renderer.terminalHeight - 2));
+  const columnManagerBodyHeight = Math.max(1, columnManagerHeight - 5);
+  const columnManagerWindowStart = useMemo(() => {
+    const len = columnOrder.length;
+    if (len <= columnManagerBodyHeight) return 0;
+    const maxStart = Math.max(0, len - columnManagerBodyHeight);
+    const half = Math.floor(columnManagerBodyHeight / 2);
+    return Math.max(0, Math.min(maxStart, columnManagerCursor - half));
+  }, [columnOrder.length, columnManagerBodyHeight, columnManagerCursor]);
+  const visibleColumnManagerColumns = useMemo(
+    () => columnOrder.slice(columnManagerWindowStart, columnManagerWindowStart + columnManagerBodyHeight),
+    [columnOrder, columnManagerWindowStart, columnManagerBodyHeight],
+  );
+  const visibleColumnManagerCursor = Math.max(
+    0,
+    Math.min(
+      visibleColumnManagerColumns.length - 1,
+      visibleColumnManagerColumns.length === 0 ? 0 : columnManagerCursor - columnManagerWindowStart,
+    ),
+  );
+
   const [appliedSearchQuery, setAppliedSearchQuery] = useState(searchQuery);
   const [searchLoading, setSearchLoading] = useState(false);
   const [sorting, setSorting] = useState(false);
   const [renaming, setRenaming] = useState(false);
+  const [columnStatsLoading, setColumnStatsLoading] = useState(false);
 
   const lastAppliedParams = useRef({
     query: "",
@@ -265,6 +311,24 @@ export function TablensApp({
     [source],
   );
 
+  useEffect(() => {
+    if (!columnManagerActive) return;
+    if (state.columnStats.length > 0 || columnStatsLoading) return;
+
+    setColumnStatsLoading(true);
+    source
+      .getColumnStats()
+      .then((stats) => {
+        dispatch({ type: "SET_COLUMN_STATS", stats });
+      })
+      .catch((err) => {
+        console.error("Column summarize failed:", err);
+      })
+      .finally(() => {
+        setColumnStatsLoading(false);
+      });
+  }, [columnManagerActive, columnStatsLoading, source, state.columnStats.length]);
+
   const [saving, setSaving] = useState(false);
   const [executingQuery, setExecutingQuery] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -273,7 +337,7 @@ export function TablensApp({
   const performUnnest = useCallback(
     (colName: string) => {
       setUnnesting(true);
-      dispatch({ type: "SET_VISIBLE_ROWS", rows: [] });
+      dispatch({ type: "SET_VISIBLE_ROWS", rows: [], rowIds: [] });
       source
         .unnestColumn(colName)
         .then(() => {
@@ -321,7 +385,7 @@ export function TablensApp({
   const performColumnFilter = useCallback(
     (columnName: string, values: string[]) => {
       setExecutingQuery(true);
-      dispatch({ type: "SET_VISIBLE_ROWS", rows: [] });
+      dispatch({ type: "SET_VISIBLE_ROWS", rows: [], rowIds: [] });
       source
         .applyColumnFilter(columnName, values)
         .then(() => {
@@ -356,7 +420,7 @@ export function TablensApp({
         return;
       }
       setExecutingQuery(true);
-      dispatch({ type: "SET_VISIBLE_ROWS", rows: [] });
+      dispatch({ type: "SET_VISIBLE_ROWS", rows: [], rowIds: [] });
       dispatch({ type: "SET_HEADERS", headers: [] });
       source
         .runQuery(sql.trim())
@@ -386,8 +450,13 @@ export function TablensApp({
         return;
       }
       setSaving(true);
+      const markedRowIds = markedRows.size > 0 ? [...markedRows] : null;
       source
-        .saveToFile(path.trim())
+        .saveToFile(
+          path.trim(),
+          markedRowIds ?? undefined,
+          visibleLayoutColumnNames.length > 0 ? visibleLayoutColumnNames : undefined,
+        )
         .then(() => {
           dispatch({ type: "EXIT_SAVE_PATH_PROMPT" });
         })
@@ -399,7 +468,7 @@ export function TablensApp({
           setSaving(false);
         });
     },
-    [source],
+    [source, markedRows, visibleLayoutColumnNames],
   );
 
   // Handle sorting
@@ -648,12 +717,29 @@ export function TablensApp({
   const filteredColIndices = useMemo(() => {
     if (!colSearchQuery) return null;
     const q = colSearchQuery.toLowerCase();
-    return headers.map((h, i) => ({ h, i })).filter(({ h }) => h.toLowerCase().includes(q)).map(({ i }) => i);
-  }, [headers, colSearchQuery]);
+    return visibleLayoutColumnIndices
+      .map((i) => ({ h: headers[i]!, i }))
+      .filter(({ h }) => h.toLowerCase().includes(q))
+      .map(({ i }) => i);
+  }, [headers, colSearchQuery, visibleLayoutColumnIndices]);
+
+  const displayColumnIndices = filteredColIndices ?? visibleLayoutColumnIndices;
+  const cursorDisplayColIndex = displayColumnIndices.indexOf(cursorCol);
+  const sortDisplayColIndex =
+    sorter === null ? undefined : displayColumnIndices.indexOf(sorter.column);
+  const displayColumnOverrides = useMemo(() => {
+    const overrides: Record<number, number> = {};
+    displayColumnIndices.forEach((columnIndex, displayIndex) => {
+      const width = columnOverrides[columnIndex];
+      if (width !== undefined) overrides[displayIndex] = width;
+    });
+    return overrides;
+  }, [columnOverrides, displayColumnIndices]);
 
   const tableContent = useMemo(() => {
     if (headers.length === 0 || totalRowCount === 0 || visibleRows.length === 0)
       return null;
+    if (displayColumnIndices.length === 0) return null;
 
     const tableW = renderer.terminalWidth;
     const consoleHeight =
@@ -662,60 +748,60 @@ export function TablensApp({
         : 0;
     const tableH = Math.max(1, renderer.terminalHeight - 1 - consoleHeight);
 
-    const dispHeaders = filteredColIndices ? filteredColIndices.map((i) => headers[i]!) : headers;
-    const dispRows = filteredColIndices
-      ? visibleRows.map((r) => filteredColIndices.map((i) => r[i] ?? ""))
-      : visibleRows;
-    const dispMatches = filteredColIndices && visibleMatches
-      ? visibleMatches.map((m) => filteredColIndices.map((i) => m[i] ?? false))
+    const dispHeaders = displayColumnIndices.map((i) => headers[i]!).filter(Boolean);
+    const dispRows = visibleRows.map((r) => displayColumnIndices.map((i) => r[i] ?? ""));
+    const dispMatches = visibleMatches
+      ? visibleMatches.map((m) => displayColumnIndices.map((i) => m[i] ?? false))
       : visibleMatches;
-    const dispTypes = filteredColIndices && state.columnTypes.length
-      ? filteredColIndices.map((i) => state.columnTypes[i] ?? "")
+    const dispTypes = state.columnTypes.length
+      ? displayColumnIndices.map((i) => state.columnTypes[i] ?? "")
       : state.columnTypes;
-    const dispStats = filteredColIndices && state.columnStats.length
-      ? filteredColIndices.map((i) => state.columnStats[i] ?? "")
+    const dispStats = state.columnStats.length
+      ? displayColumnIndices.map((i) => state.columnStats[i] ?? "")
       : state.columnStats;
 
     const sortColumnInHeaders =
-      state.sorter === null
-        ? undefined
-        : filteredColIndices
-          ? filteredColIndices.indexOf(state.sorter.column)
-          : state.sorter.column;
-    const sortDirection =
-      sortColumnInHeaders !== undefined && sortColumnInHeaders >= 0
-        ? state.sorter.direction
+      sortDisplayColIndex !== undefined && sortDisplayColIndex >= 0
+        ? sortDisplayColIndex
         : undefined;
+    const sortDirection =
+      sortColumnInHeaders !== undefined ? sorter?.direction : undefined;
 
     return computeTableContentModel({
       headers: dispHeaders,
       visibleRows: dispRows,
+      visibleRowIds,
       visibleMatches: dispMatches,
+      markedRows,
       rowsOffset,
-      colsOffset: filteredColIndices ? 0 : colsOffset,
+      colsOffset,
       wrapMode,
-      columnOverrides,
+      columnOverrides: displayColumnOverrides,
       termW: tableW,
       termH: tableH,
       totalRowCount,
       selectionMode: state.selectionMode,
-      cursorCol: state.cursorCol,
+      selectedColIndex: cursorDisplayColIndex >= 0 ? cursorDisplayColIndex : undefined,
       showTypes: state.showTypes,
       columnTypes: dispTypes,
       showStats: state.showStats,
       columnStats: dispStats,
       columnWidthMode: state.columnWidthMode,
       sortColumnInHeaders:
-        sortColumnInHeaders !== undefined && sortColumnInHeaders >= 0
-          ? sortColumnInHeaders
-          : undefined,
+        sortColumnInHeaders,
       sortDirection,
     });
   }, [
     headers,
     totalRowCount,
     visibleRows,
+    visibleRowIds,
     visibleMatches,
+    markedRows,
+    displayColumnIndices,
+    displayColumnOverrides,
+    cursorDisplayColIndex,
+    sortDisplayColIndex,
     colsOffset,
     rowsOffset,
     wrapMode,
@@ -728,7 +814,6 @@ export function TablensApp({
     state.columnStats,
     state.columnWidthMode,
     state.sorter,
-    filteredColIndices,
     renderer.terminalWidth,
     renderer.terminalHeight,
     renderer.console.visible,
@@ -744,26 +829,29 @@ export function TablensApp({
     const tableH = Math.max(1, renderer.terminalHeight - 1 - consoleHeight);
 
     return computeCursorOverlay({
-      state,
+      state: { ...state, cursorCol: cursorDisplayColIndex } as typeof state,
       colWidths: tableContent.colWidths,
       rowHeights: tableContent.rowHeights,
       gutterWidth: tableContent.gutterWidth,
       termH: tableH,
       visCount: tableContent.visCount,
     });
-  }, [state, tableContent, renderer.terminalHeight, renderer.console.visible]);
+  }, [state, tableContent, renderer.terminalHeight, renderer.console.visible, cursorDisplayColIndex]);
 
   const headerOverlay = useMemo(() => {
     if (!tableContent) return { visible: false };
 
     return computeHeaderOverlay({
-      state,
+      selectionMode: state.selectionMode,
+      selectedColIndex: cursorDisplayColIndex >= 0 ? cursorDisplayColIndex : undefined,
+      sortColumnIndex: sortDisplayColIndex >= 0 ? sortDisplayColIndex : undefined,
+      sortDirection: sorter?.direction,
       colWidths: tableContent.colWidths,
       gutterWidth: tableContent.gutterWidth,
-      dispHeaders: headers.slice(state.colsOffset),
-      colsOffset: state.colsOffset,
+      dispHeaders: displayColumnIndices.map((i) => headers[i]!).slice(colsOffset),
+      colsOffset,
     });
-  }, [state, tableContent, headers]);
+  }, [state.selectionMode, cursorDisplayColIndex, sortDisplayColIndex, sorter?.direction, tableContent, displayColumnIndices, headers, colsOffset]);
 
   useKeyboard((key: KeyEvent) => {
     handleTablensKey(key, {
@@ -780,6 +868,7 @@ export function TablensApp({
       handleSavePathSubmit,
       handleQuerySubmit,
       tableContent,
+      visibleColumnIndices: displayColumnIndices,
       consoleCaptureRef,
     });
   });
@@ -812,6 +901,8 @@ export function TablensApp({
           <EmptyState
             type={(() => {
               if (headers.length === 0) return "loading";
+              if (visibleLayoutColumnIndices.length === 0) return "no-columns";
+              if (colSearchQuery.length > 0 && displayColumnIndices.length === 0) return "no-results";
 
               if (appliedSearchQuery.length > 0) {
                 if (visibleRows.length === 0) return "no-results";
@@ -823,7 +914,7 @@ export function TablensApp({
 
               return "loading";
             })()}
-            query={appliedSearchQuery}
+            query={colSearchQuery.length > 0 && displayColumnIndices.length === 0 ? colSearchQuery : appliedSearchQuery}
           />
         )}
         <box
@@ -887,7 +978,7 @@ export function TablensApp({
           <ColSearchBar
             query={colSearchQuery}
             active={state.colSearchActive}
-            matchCount={filteredColIndices ? filteredColIndices.length : headers.length}
+            matchCount={filteredColIndices ? filteredColIndices.length : displayColumnIndices.length}
             totalCols={headers.length}
             onInput={(value) => dispatch({ type: "SET_COL_SEARCH_QUERY", query: value })}
             onSubmit={() => dispatch({ type: "EXIT_COL_SEARCH" })}
@@ -938,6 +1029,7 @@ export function TablensApp({
             searchError={state.searchError}
             sorting={sorting}
             selectionMode={selectionMode}
+            markedCount={markedRows.size}
             scrollRowsPerSec={scrollRowsPerSec}
           />
         )}
@@ -962,6 +1054,19 @@ export function TablensApp({
           searchQuery={columnFilterSearchQuery}
           filteredCount={filteredColumnFilterData.length}
           windowStart={columnFilterWindowStart}
+        />
+      )}
+      {columnManagerActive && (
+        <ColumnManagerModal
+          headers={headers}
+          columns={visibleColumnManagerColumns}
+          hiddenColumns={hiddenColumns}
+          cursor={visibleColumnManagerCursor}
+          windowStart={columnManagerWindowStart}
+          stats={state.columnStats}
+          loading={columnStatsLoading}
+          termWidth={renderer.terminalWidth}
+          termHeight={renderer.terminalHeight}
         />
       )}
       {state.showHelp && <HelpModal />}

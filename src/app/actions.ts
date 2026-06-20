@@ -1,8 +1,8 @@
 export type Action =
   | { type: "MOVE_UP"; pageSize: number }
   | { type: "MOVE_DOWN"; pageSize: number }
-  | { type: "MOVE_LEFT" }
-  | { type: "MOVE_RIGHT" }
+  | { type: "MOVE_LEFT"; visibleColumns?: number[] }
+  | { type: "MOVE_RIGHT"; visibleColumns?: number[] }
   | { type: "PAGE_UP"; pageSize: number }
   | { type: "PAGE_DOWN"; pageSize: number }
   | { type: "CYCLE_SELECTION_MODE" }
@@ -23,6 +23,14 @@ export type Action =
   | { type: "SET_SEARCH_ERROR"; error: string | null }
   | { type: "SET_LOAD_ERROR"; error: string | null }
   | { type: "SORT"; direction: "asc" | "desc" }
+  | { type: "OPEN_COLUMN_MANAGER" }
+  | { type: "CLOSE_COLUMN_MANAGER" }
+  | { type: "MOVE_COLUMN_MANAGER_CURSOR"; delta: number }
+  | { type: "MOVE_COLUMN_IN_LAYOUT"; delta: number }
+  | { type: "TOGGLE_COLUMN_HIDDEN" }
+  | { type: "RESET_COLUMN_LAYOUT" }
+  | { type: "TOGGLE_MARK_ROW"; rowId: number }
+  | { type: "CLEAR_MARKED_ROWS" }
   | { type: "ENTER_RENAME_COLUMN" }
   | { type: "EXIT_RENAME_COLUMN" }
   | { type: "SET_RENAME_QUERY"; query: string }
@@ -32,7 +40,7 @@ export type Action =
   | { type: "OPEN_QUERY_EDITOR"; query: string }
   | { type: "SET_QUERY_EDITOR_VALUE"; query: string }
   | { type: "CLOSE_QUERY_EDITOR" }
-  | { type: "SET_VISIBLE_ROWS"; rows: string[][] }
+  | { type: "SET_VISIBLE_ROWS"; rows: string[][]; rowIds?: number[] }
   | { type: "TOGGLE_SHOW_TYPES" }
   | { type: "SET_COLUMN_TYPES"; types: string[] }
   | { type: "TOGGLE_SHOW_STATS" }

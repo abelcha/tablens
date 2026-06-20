@@ -18,6 +18,11 @@ export interface State {
   numFreezeCols: number;
   selectionMode: SelectionMode;
   markedRows: Set<number>;
+  visibleRowIds: number[];
+  columnOrder: number[];
+  hiddenColumns: Set<number>;
+  columnManagerActive: boolean;
+  columnManagerCursor: number;
   found: { row: number; col: number }[];
   searchActive: boolean;
   searchQuery: string;

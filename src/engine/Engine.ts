@@ -97,8 +97,8 @@ class DuckDBSqlExecutor implements SqlExecutor {
   async run(sql: string): Promise<QueryResult> {
     const queryId = ++this.nextQueryId;
     const label = `duckdb:${queryId}`;
-    console.time(label);
-    this.log(sql);
+    // console.time(label);
+    // this.log(sql);
     try {
       const result = await this.connection.run(sql);
       return {
@@ -106,7 +106,7 @@ class DuckDBSqlExecutor implements SqlExecutor {
         rows: await result.getRows(),
       };
     } finally {
-      console.timeEnd(label);
+      // console.timeEnd(label);
     }
   }
 }
@@ -135,6 +135,26 @@ export class Engine implements TablensEngine {
 
   private sqlLiteral(value: string): string {
     return `'${value.replaceAll(`'`, `''`)}'`;
+  }
+
+  /** Cast problematic types (geometry) to readable varchar representations */
+  private safeColumnExpr(column: string): string {
+    const idx = this.sourceColumns.indexOf(column);
+    const type = idx >= 0 ? this.sourceColumnTypes[idx]?.toUpperCase() : null;
+    if (type?.startsWith("GEOMETRY")) {
+      return `ST_AsText(${this.quoteIdent(column)})`;
+    }
+    return `p.${this.quoteIdent(column)}`;
+  }
+
+  /** For ORDER BY - geometry/json become constant so sort is stable */
+  private safeSortExpr(column: string): string {
+    const idx = this.sourceColumns.indexOf(column);
+    const type = idx >= 0 ? this.sourceColumnTypes[idx]?.toUpperCase() : null;
+    if (type === "JSON" || type?.startsWith("GEOMETRY")) {
+      return `'1'`; // constant, sort falls back to file_row_number
+    }
+    return `p.${this.quoteIdent(column)}`;
   }
 
   private ensureReady(): void {
@@ -195,6 +215,9 @@ export class Engine implements TablensEngine {
     if (typeof val !== "object") return String(val);
     const obj = val as Record<string, unknown>;
     if (this.isDecimalValue(obj)) return this.formatDecimal(obj);
+    if ("hugeint" in obj && typeof obj.hugeint === "bigint" && Object.keys(obj).length === 1) {
+      return String(val);
+    }
     if ("days" in obj && typeof obj.days === "number" && Object.keys(obj).length === 1) {
       const date = new Date((obj.days as number) * 24 * 60 * 60 * 1000);
       return date.toISOString().split("T")[0] || "";
@@ -400,12 +423,19 @@ export class Engine implements TablensEngine {
       this.activeParquetPath = input.path;
       this.ownsActiveParquet = false;
       this.currentSourceQuery = null;
-    } else if (input.kind === "csv") {
+    } else if (input.kind === "file") {
       this.activeParquetPath = join(this.getTempDir(), `${basename(input.path)}.parquet`);
       this.ownsActiveParquet = true;
       this.currentSourceQuery = null;
+
+      const path = input.path.toLowerCase();
+      const readFunc =
+        path.endsWith(".json") || path.endsWith(".jsonl")
+          ? `read_json_auto(${this.sqlLiteral(input.path)})`
+          : `read_csv_auto(${this.sqlLiteral(input.path)})`;
+
       await this.executor.run(
-        `COPY (SELECT * FROM read_csv_auto(${this.sqlLiteral(input.path)})) TO ${this.sqlLiteral(this.activeParquetPath)} (FORMAT PARQUET)`,
+        `COPY (SELECT * FROM ${readFunc}) TO ${this.sqlLiteral(this.activeParquetPath)} (FORMAT PARQUET)`,
       );
     } else {
       this.activeParquetPath = join(this.getTempDir(), "query.parquet");
@@ -502,7 +532,7 @@ export class Engine implements TablensEngine {
     this.ensureReady();
     const handle = await this.buildView(request.view);
     const columns = request.columns && request.columns.length > 0 ? request.columns : this.sourceColumns;
-    const selectColumns = columns.map((column) => `p.${this.quoteIdent(column)}`).join(", ");
+    const selectColumns = columns.map((column) => `${this.safeColumnExpr(column)} AS ${this.quoteIdent(column)}`).join(", ");
     const matchColumns =
       request.includeMatches === false
         ? []
@@ -514,7 +544,7 @@ export class Engine implements TablensEngine {
         FROM ${handle.tableName}
         LIMIT ${request.limit} OFFSET ${request.offset}
       )
-      SELECT ${selectColumns}${matchColumns.length > 0 ? `, ${matchColumns.join(", ")}` : ""}
+      SELECT ids.file_row_number AS __row_id, ${selectColumns}${matchColumns.length > 0 ? `, ${matchColumns.join(", ")}` : ""}
       FROM page_ids ids
       JOIN read_parquet(${this.sqlLiteral(this.activeParquetPath)}, file_row_number=true) p
       USING (file_row_number)
@@ -522,13 +552,15 @@ export class Engine implements TablensEngine {
     `;
 
     const result = await this.executor!.run(sql);
+    const rowIds: number[] = [];
     const rows: string[][] = [];
     const matches: boolean[][] = [];
     for (const row of result.rows) {
-      const rendered = columns.map((_, index) => this.valueToString(row[index]));
+      rowIds.push(Number(row[0] ?? 0));
+      const rendered = columns.map((_, index) => this.valueToString(row[index + 1]));
       rows.push(rendered);
       if (request.includeMatches !== false) {
-        const matchRow = columns.map((_, index) => Boolean(row[columns.length + index]));
+        const matchRow = columns.map((_, index) => Boolean(row[columns.length + index + 1]));
         matches.push(matchRow);
       }
     }
@@ -537,6 +569,7 @@ export class Engine implements TablensEngine {
       offset: request.offset,
       limit: request.limit,
       totalRows: handle.totalRows,
+      rowIds,
       rows,
       columns,
       matches: request.includeMatches !== false ? matches : undefined,
@@ -679,7 +712,7 @@ export class Engine implements TablensEngine {
     await this.open({ kind: "query", sql: input });
   }
 
-  async saveToFile(outPath: string): Promise<void> {
+  async saveToFile(outPath: string, rowIds?: number[], columns?: string[]): Promise<void> {
     const ext = outPath.match(/\.[^.]+$/)?.[0]?.toLowerCase() || "";
     const format: "parquet" | "csv" | "json" =
       ext === ".csv" ? "csv" : ext === ".json" ? "json" : "parquet";
@@ -687,6 +720,8 @@ export class Engine implements TablensEngine {
       view: this.getCurrentSpecOrDefault(),
       outPath,
       format,
+      rowIds,
+      columns,
     });
   }
 
@@ -842,10 +877,14 @@ export class Engine implements TablensEngine {
     this.ensureReady();
     const handle = await this.buildView(request.view);
     const columns = request.columns && request.columns.length > 0 ? request.columns : this.sourceColumns;
-    const projection = columns.map((column) => `p.${this.quoteIdent(column)}`).join(", ");
+    const projection = columns.map((column) => `${this.safeColumnExpr(column)} AS ${this.quoteIdent(column)}`).join(", ");
+    const rowIdFilter =
+      request.rowIds && request.rowIds.length > 0
+        ? `AND p.file_row_number IN (${request.rowIds.map((id) => Number(id)).join(", ")})`
+        : "";
     const sortOrder =
       request.view.sort.length > 0
-        ? `${request.view.sort.map((spec) => `p.${this.quoteIdent(spec.column)} ${spec.direction.toUpperCase()} NULLS ${(spec.nulls ?? "last").toUpperCase()}`).join(", ")}, p.file_row_number`
+        ? `${request.view.sort.map((spec) => `${this.safeSortExpr(spec.column)} ${spec.direction.toUpperCase()} NULLS ${(spec.nulls ?? "last").toUpperCase()}`).join(", ")}, p.file_row_number`
         : "p.file_row_number";
     const formatClause =
       request.format === "parquet"
@@ -860,6 +899,7 @@ export class Engine implements TablensEngine {
         FROM read_parquet(${this.sqlLiteral(this.activeParquetPath)}, file_row_number=true) p
         WHERE ${this.buildFilterClause(request.view.filter)}
           AND ${this.buildSearchPredicate(request.view.search)}
+          ${rowIdFilter}
         ORDER BY ${sortOrder}
       ) TO ${this.sqlLiteral(request.outPath)} ${formatClause}
     `);

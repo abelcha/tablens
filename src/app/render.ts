@@ -23,7 +23,9 @@ export interface TableContentModel {
 export function computeTableContentModel(args: {
   headers: string[];
   visibleRows: string[][];
+  visibleRowIds: number[];
   visibleMatches?: boolean[][];
+  markedRows?: Set<number>;
   rowsOffset: number;
   colsOffset: number;
   wrapMode: WrapMode;
@@ -32,7 +34,7 @@ export function computeTableContentModel(args: {
   termH: number;
   totalRowCount: number;
   selectionMode?: SelectionMode;
-  cursorCol?: number;
+  selectedColIndex?: number;
   showTypes?: boolean;
   columnTypes?: string[];
   showStats?: boolean;
@@ -44,7 +46,9 @@ export function computeTableContentModel(args: {
   const {
     headers,
     visibleRows,
+    visibleRowIds,
     visibleMatches,
+    markedRows,
     rowsOffset,
     colsOffset,
     wrapMode,
@@ -53,7 +57,7 @@ export function computeTableContentModel(args: {
     termH,
     totalRowCount,
     selectionMode,
-    cursorCol,
+    selectedColIndex,
     showTypes,
     columnTypes,
     showStats,
@@ -66,7 +70,7 @@ export function computeTableContentModel(args: {
   // Calculate gutter width based on estimated max visible row
   const estimatedPageSize = Math.max(termH - 4, 10);
   const maxVisibleRow = Math.min(rowsOffset + estimatedPageSize, totalRowCount);
-  let gutterWidth = String(maxVisibleRow).length;
+  let gutterWidth = String(maxVisibleRow).length + 1;
   const dataPadding = 2; // "│ "
   let tableW = termW - gutterWidth - dataPadding;
 
@@ -132,12 +136,13 @@ export function computeTableContentModel(args: {
 
   // Recalculate gutter width based on actual visible rows
   const actualMaxVisibleRow = rowsOffset + visCount;
-  const newGutterWidth = String(actualMaxVisibleRow).length;
+  const newGutterWidth = String(actualMaxVisibleRow).length + 1;
   if (newGutterWidth !== gutterWidth) {
     gutterWidth = newGutterWidth;
   }
 
   const visRows = visibleRows.slice(0, visCount).map((r) => r.slice(colsOffset));
+  const visRowIds = visibleRowIds.slice(0, visCount);
   const visMatches = visibleMatches
     ? visibleMatches.slice(0, visCount).map((m) => m.slice(colsOffset))
     : undefined;
@@ -145,7 +150,9 @@ export function computeTableContentModel(args: {
 
   // Determine selected column index relative to displayed columns
   const selectedColIdx =
-    selectionMode === "column" && cursorCol !== undefined ? cursorCol - colsOffset : undefined;
+    selectionMode === "column" && selectedColIndex !== undefined
+      ? selectedColIndex - colsOffset
+      : undefined;
   const validSelectedColIdx =
     selectedColIdx !== undefined && selectedColIdx >= 0 && selectedColIdx < dispHeaders.length
       ? selectedColIdx
@@ -179,8 +186,10 @@ export function computeTableContentModel(args: {
     visRows
       .map((r, i) => {
         const rowNum = rowsOffset + i + 1;
+        const rowId = visRowIds[i];
+        const isMarked = rowId !== undefined ? markedRows?.has(rowId) === true : false;
         return Array.from({ length: visHeights[i] || 1 }, (_, h) =>
-          buildRowLine(r, colWidths, wrapMode, h, rowNum, gutterWidth, visMatches?.[i]),
+          buildRowLine(r, colWidths, wrapMode, h, rowNum, gutterWidth, visMatches?.[i], isMarked),
         ).join("");
       })
       .join("") +

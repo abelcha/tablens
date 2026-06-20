@@ -101,6 +101,7 @@ export function alignColsOffset(args: {
 export interface ViewportPatch {
   rowsOffset: number;
   colsOffset: number;
+  visibleRowIds: number[];
   visibleRows: string[][];
   visibleMatches: boolean[][];
   totalRows: number;
@@ -111,6 +112,7 @@ export interface ViewportPatch {
 export type PageWindowCache = {
   viewKey: string;
   startOffset: number;
+  rowIds: number[];
   rows: string[][];
   matches: boolean[][];
   totalRows: number;
@@ -237,6 +239,7 @@ export function trySyncViewportPatch(args: {
   if (rowsOffset < cacheStart || rowsOffset + fetchLimit > cacheEnd) return null;
 
   const rel = rowsOffset - cacheStart;
+  const visibleRowIds = pageCache.rowIds.slice(rel, rel + fetchLimit);
   const visibleRows = pageCache.rows.slice(rel, rel + fetchLimit);
   const visibleMatches = pageCache.matches.slice(rel, rel + fetchLimit);
   colsOffset = alignColsOffset({
@@ -254,6 +257,7 @@ export function trySyncViewportPatch(args: {
   return {
     rowsOffset,
     colsOffset,
+    visibleRowIds,
     visibleRows,
     visibleMatches,
     totalRows: pageCache.totalRows,
@@ -290,7 +294,7 @@ export async function computeViewportPatch(args: {
     pageCache,
   } = args;
   const { headers, selectionMode, cursorRow, cursorCol, wrapMode, columnOverrides } = state;
-  let { rowsOffset, colsOffset, visibleRows, visibleMatches } = state;
+  let { rowsOffset, colsOffset, visibleRows, visibleMatches, visibleRowIds } = state;
 
   const fetchLimit = Math.max(Math.floor((termH || 20) * 2), 200);
   const cacheLimit = Math.max(fetchLimit * 8, 800);
@@ -328,6 +332,7 @@ export async function computeViewportPatch(args: {
 
   if (canServeFromCache && !needsFetch) {
     const rel = rowsOffset - pageCache!.startOffset;
+    visibleRowIds = pageCache!.rowIds.slice(rel, rel + fetchLimit);
     visibleRows = pageCache!.rows.slice(rel, rel + fetchLimit);
     visibleMatches = pageCache!.matches.slice(rel, rel + fetchLimit);
     totalRows = pageCache!.totalRows;
@@ -344,10 +349,12 @@ export async function computeViewportPatch(args: {
     nextCache = {
       viewKey,
       startOffset: rowsOffset,
+      rowIds: res.rowIds,
       rows: res.rows,
       matches: res.matches || makeFullWidthMatches(res.rows.length, headers.length),
       totalRows: res.totalRows,
     };
+    visibleRowIds = nextCache.rowIds.slice(0, fetchLimit);
     visibleRows = nextCache.rows.slice(0, fetchLimit);
     visibleMatches = nextCache.matches.slice(0, fetchLimit);
     totalRows = nextCache.totalRows;
@@ -400,6 +407,7 @@ export async function computeViewportPatch(args: {
       rowsOffset + fetchLimit <= nextCache.startOffset + nextCache.rows.length
     ) {
       const rel = rowsOffset - nextCache.startOffset;
+      visibleRowIds = nextCache.rowIds.slice(rel, rel + fetchLimit);
       visibleRows = nextCache.rows.slice(rel, rel + fetchLimit);
       visibleMatches = nextCache.matches.slice(rel, rel + fetchLimit);
       totalRows = nextCache.totalRows;
@@ -414,15 +422,17 @@ export async function computeViewportPatch(args: {
       nextCache = {
         viewKey,
         startOffset: rowsOffset,
+        rowIds: res.rowIds,
         rows: res.rows,
         matches: res.matches || makeFullWidthMatches(res.rows.length, headers.length),
         totalRows: res.totalRows,
       };
+      visibleRowIds = nextCache.rowIds.slice(0, fetchLimit);
       visibleRows = nextCache.rows.slice(0, fetchLimit);
       visibleMatches = nextCache.matches.slice(0, fetchLimit);
       totalRows = nextCache.totalRows;
     }
   }
 
-  return { rowsOffset, colsOffset, visibleRows, visibleMatches, totalRows, pageCache: nextCache };
+  return { rowsOffset, colsOffset, visibleRowIds, visibleRows, visibleMatches, totalRows, pageCache: nextCache };
 }

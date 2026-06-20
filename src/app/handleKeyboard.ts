@@ -54,6 +54,7 @@ export type KeyboardContext = {
   filteredColumnFilterData: Array<{ value: string; count: number; percent: number }>;
   activeColumnFilterCursor: number;
   columnFilterPageSize: number;
+  visibleColumnIndices: number[];
   queryEditorRef: { current: QueryEditorHandle | null };
   performColumnFilter: (columnName: string, values: string[]) => void;
   performRename: (oldName: string, newName: string) => void;
@@ -73,6 +74,7 @@ export function handleTablensKey(key: KeyEvent, ctx: KeyboardContext): void {
     filteredColumnFilterData,
     activeColumnFilterCursor,
     columnFilterPageSize,
+    visibleColumnIndices,
     queryEditorRef,
     performColumnFilter,
     performRename,
@@ -260,11 +262,60 @@ export function handleTablensKey(key: KeyEvent, ctx: KeyboardContext): void {
     return;
   }
 
+  if (state.columnManagerActive) {
+    if (key.name === "escape" || key.name === "enter" || key.name === "q" || key.name === "Q") {
+      dispatch({ type: "CLOSE_COLUMN_MANAGER" });
+      return;
+    }
+    if (key.name === "up" || key.name === "k" || key.name === "K" || key.name === "pageup") {
+      if (key.shift) {
+        dispatch({ type: "MOVE_COLUMN_IN_LAYOUT", delta: -1 });
+      } else {
+        dispatch({ type: "MOVE_COLUMN_MANAGER_CURSOR", delta: -1 });
+      }
+      return;
+    }
+    if (key.name === "down" || key.name === "j" || key.name === "J" || key.name === "pagedown") {
+      if (key.shift) {
+        dispatch({ type: "MOVE_COLUMN_IN_LAYOUT", delta: 1 });
+      } else {
+        dispatch({ type: "MOVE_COLUMN_MANAGER_CURSOR", delta: 1 });
+      }
+      return;
+    }
+    if (key.name === "left" || key.name === "h" || key.name === "H") {
+      dispatch({ type: "MOVE_COLUMN_IN_LAYOUT", delta: -1 });
+      return;
+    }
+    if (key.name === "right" || key.name === "l" || key.name === "L") {
+      dispatch({ type: "MOVE_COLUMN_IN_LAYOUT", delta: 1 });
+      return;
+    }
+    if (key.name === "space" || key.raw === " ") {
+      dispatch({ type: "TOGGLE_COLUMN_HIDDEN" });
+      return;
+    }
+    if (key.name === "r" || key.name === "R") {
+      dispatch({ type: "RESET_COLUMN_LAYOUT" });
+      return;
+    }
+    return;
+  }
+
   if (state.searchActive) {
     if (key.name === "escape") {
       dispatch({ type: "EXIT_SEARCH" });
       return;
     }
+    return;
+  }
+
+  if (state.selectionMode === "column" && key.shift && key.name === "left") {
+    dispatch({ type: "MOVE_COLUMN_IN_LAYOUT", delta: -1 });
+    return;
+  }
+  if (state.selectionMode === "column" && key.shift && key.name === "right") {
+    dispatch({ type: "MOVE_COLUMN_IN_LAYOUT", delta: 1 });
     return;
   }
 
@@ -349,6 +400,28 @@ export function handleTablensKey(key: KeyEvent, ctx: KeyboardContext): void {
     return;
   }
 
+  if (
+    (key.name === "m" || key.name === "M" || key.name === "space" || key.raw === " ") &&
+    state.selectionMode !== "column"
+  ) {
+    const relativeRow = state.cursorRow - state.rowsOffset;
+    const rowId = state.visibleRowIds[relativeRow];
+    if (rowId !== undefined) {
+      dispatch({ type: "TOGGLE_MARK_ROW", rowId });
+    }
+    return;
+  }
+
+  if ((key.name === "return" || key.name === "enter") && state.selectionMode !== "column") {
+    const relativeRow = state.cursorRow - state.rowsOffset;
+    const rowId = state.visibleRowIds[relativeRow];
+    if (rowId !== undefined) {
+      dispatch({ type: "TOGGLE_MARK_ROW", rowId });
+      dispatch({ type: "MOVE_DOWN", pageSize: renderer.terminalHeight - 4 });
+    }
+    return;
+  }
+
   if (key.name === "e" && state.selectionMode === "column") return;
   if ((key.name === "U" || (key.name === "u" && key.shift)) && state.selectionMode === "column")
     return;
@@ -360,6 +433,11 @@ export function handleTablensKey(key: KeyEvent, ctx: KeyboardContext): void {
       type: "PROMPT_SAVE_PATH",
       defaultPath: source.suggestSavePath(),
     });
+    return;
+  }
+
+  if (key.shift && key.name === "i") {
+    dispatch({ type: "OPEN_COLUMN_MANAGER" });
     return;
   }
 
@@ -375,7 +453,7 @@ export function handleTablensKey(key: KeyEvent, ctx: KeyboardContext): void {
     return;
   }
 
-  if (key.name === "i") {
+  if (key.name === "i" && !key.shift) {
     if (!state.showStats && state.columnStats.length === 0) {
       source.getColumnStats().then((stats) => {
         dispatch({ type: "SET_COLUMN_STATS", stats });
@@ -412,7 +490,7 @@ export function handleTablensKey(key: KeyEvent, ctx: KeyboardContext): void {
   }
 
   const pageSize = renderer.terminalHeight - 4;
-  const actions = keyToActions(key, { pageSize });
+  const actions = keyToActions(key, { pageSize, visibleColumnIndices });
   actions.forEach((action) => {
     if (
       action.type === "RESIZE_COLUMN" &&
