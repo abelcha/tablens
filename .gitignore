@@ -4,7 +4,12 @@ node_modules.asif
 node_modules.asif
 .DS_Store
 .trash/
+.trash.*
 opentui
+webgpu-table
+
+*.log
+.log
 
 *.xml
 *.csv

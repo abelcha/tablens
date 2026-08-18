@@ -43,6 +43,26 @@ export async function launchTablens(options: { file: string; query?: string }) {
   );
 }
 
+export async function launchDirectory(rootPath: string) {
+  const renderer = await createCliRenderer({
+    exitOnCtrlC: true,
+    targetFps: 40,
+    useConsole: true,
+    consoleOptions: {
+      position: ConsolePosition.BOTTOM,
+      sizePercent: 30,
+      colorInfo: "#00FFFF",
+      colorWarn: "#FFFF00",
+      colorError: "#FF0000",
+      startInDebugMode: false,
+    },
+  });
+
+  createRoot(renderer).render(
+    createElement(DirectoryMode, { rootPath }),
+  );
+}
+
 async function main() {
   const { values, positionals } = parseArgs({
     args: process.argv.slice(2),

@@ -168,6 +168,25 @@ export class Engine implements TablensEngine {
     return `SELECT * FROM read_parquet(${this.sqlLiteral(this.activeParquetPath)}, file_row_number=true)`;
   }
 
+  /**
+   * Execute user SQL init files from ~/.config/duckdb/, mirroring ~/.duckdbrc `.read` order
+   * (utils.sql defines helpers that macros.sql depends on, e.g. `_join`).
+   */
+  private async loadUserMacros(): Promise<void> {
+    if (!this.executor) return;
+    const dir = join(homedir(), ".config", "duckdb");
+    for (const name of ["utils.sql", "macros.sql", "config.sql", "names.sql"]) {
+      const filePath = join(dir, name);
+      if (!existsSync(filePath)) continue;
+      try {
+        const sql = readFileSync(filePath, "utf8").trim();
+        if (sql) await this.executor.run(sql);
+      } catch (err) {
+        console.warn(`tablens: failed to load ${filePath}:`, err);
+      }
+    }
+  }
+
   private normalizeQuerySql(sql: string): string {
     const trimmed = sql.trim().replace(/;+\s*$/, "");
     if (!trimmed) return "SELECT 1 WHERE FALSE";
@@ -417,6 +436,7 @@ export class Engine implements TablensEngine {
     this.instance = await DuckDBInstance.create();
     this.connection = await this.instance.connect();
     this.executor = new DuckDBSqlExecutor(this.connection);
+    await this.loadUserMacros();
     this.getTempDir();
 
     if (input.kind === "parquet") {
