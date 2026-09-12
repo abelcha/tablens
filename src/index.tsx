@@ -50,13 +50,38 @@ export function TablensApp({
   file,
   query,
   source,
+  width,
+  height,
+  keyboardEnabled = true,
+  onNavigateLeft,
 }: {
   file: string;
   query?: string;
   source: Engine;
+  /** Pane width in chars. Defaults to full terminal width. */
+  width?: number;
+  /** Pane height in rows (incl. status line). Defaults to terminal height minus console. */
+  height?: number;
+  /** When false, all keyboard input is ignored (used by Directory mode). */
+  keyboardEnabled?: boolean;
+  /** Called instead of moving left when the cursor is already at the first column. */
+  onNavigateLeft?: () => void;
 }) {
   const renderer = useRenderer();
   const [state, dispatch] = useReducer(reducer, initialState());
+
+  // Effective pane dimensions. When embedded (Directory mode) the parent passes
+  // explicit dims; otherwise we fall back to the full terminal and account for
+  // the built-in console.
+  const consoleHeight =
+    height === undefined &&
+    renderer.console.visible &&
+    renderer.console.bounds?.height
+      ? Number(renderer.console.bounds.height) || 0
+      : 0;
+  const termH = height ?? Math.max(1, renderer.terminalHeight - consoleHeight);
+  const termW = width ?? renderer.terminalWidth;
+  const tableH = Math.max(1, termH - 1);
   const [terminalBgColor, setTerminalBgColor] = useState<string>("#1e1e1e");
 
   useEffect(() => {
@@ -202,7 +227,7 @@ export function TablensApp({
     [visibleLayoutColumnIndices, headers],
   );
 
-  const columnManagerHeight = Math.max(24, Math.min(40, renderer.terminalHeight - 2));
+  const columnManagerHeight = Math.max(24, Math.min(40, termH - 2));
   const columnManagerBodyHeight = Math.max(1, columnManagerHeight - 5);
   const columnManagerWindowStart = useMemo(() => {
     const len = columnOrder.length;
@@ -546,18 +571,12 @@ export function TablensApp({
   useEffect(() => {
     if (headers.length === 0) return;
 
-    const consoleHeight =
-      renderer.console.visible && renderer.console.bounds?.height
-        ? Number(renderer.console.bounds.height) || 0
-        : 0;
-    const tableH = Math.max(1, renderer.terminalHeight - 1 - consoleHeight);
-    const tableW = renderer.terminalWidth;
     const viewportState = { ...state, searchQuery: appliedSearchQuery };
 
     // Fast path — no DuckDB; keeps rowsOffset and visibleRows in sync when still inside cache.
     const syncPatch = trySyncViewportPatch({
       state: viewportState,
-      termW: tableW,
+      termW,
       termH: tableH,
       lastRenderedQuery: lastRenderedQuery.current,
       lastRenderedUseRegex: lastRenderedUseRegex.current,
@@ -583,7 +602,7 @@ export function TablensApp({
     viewportSnapshotRef.current = {
       requestId,
       state: viewportState,
-      termW: tableW,
+      termW,
       termH: tableH,
       source,
       lastRenderedOffset: lastRenderedOffset.current,
@@ -653,9 +672,8 @@ export function TablensApp({
 
     void runViewportLoop();
   }, [
-    renderer.terminalHeight,
-    renderer.terminalWidth,
-    renderer.console.visible,
+    termH,
+    termW,
     headers,
     totalRowCount,
     rowsOffset,
@@ -741,13 +759,6 @@ export function TablensApp({
       return null;
     if (displayColumnIndices.length === 0) return null;
 
-    const tableW = renderer.terminalWidth;
-    const consoleHeight =
-      renderer.console.visible && renderer.console.bounds?.height
-        ? Number(renderer.console.bounds.height) || 0
-        : 0;
-    const tableH = Math.max(1, renderer.terminalHeight - 1 - consoleHeight);
-
     const dispHeaders = displayColumnIndices.map((i) => headers[i]!).filter(Boolean);
     const dispRows = visibleRows.map((r) => displayColumnIndices.map((i) => r[i] ?? ""));
     const dispMatches = visibleMatches
@@ -776,8 +787,9 @@ export function TablensApp({
       rowsOffset,
       colsOffset,
       wrapMode,
+      multilineMode: state.multilineMode,
       columnOverrides: displayColumnOverrides,
-      termW: tableW,
+      termW,
       termH: tableH,
       totalRowCount,
       selectionMode: state.selectionMode,
@@ -814,19 +826,12 @@ export function TablensApp({
     state.columnStats,
     state.columnWidthMode,
     state.sorter,
-    renderer.terminalWidth,
-    renderer.terminalHeight,
-    renderer.console.visible,
+    termW,
+    tableH,
   ]);
 
   const cursorStyle = useMemo(() => {
     if (!tableContent) return { visible: false };
-
-    const consoleHeight =
-      renderer.console.visible && renderer.console.bounds?.height
-        ? Number(renderer.console.bounds.height) || 0
-        : 0;
-    const tableH = Math.max(1, renderer.terminalHeight - 1 - consoleHeight);
 
     return computeCursorOverlay({
       state: { ...state, cursorCol: cursorDisplayColIndex } as typeof state,
@@ -836,7 +841,7 @@ export function TablensApp({
       termH: tableH,
       visCount: tableContent.visCount,
     });
-  }, [state, tableContent, renderer.terminalHeight, renderer.console.visible, cursorDisplayColIndex]);
+  }, [state, tableContent, tableH, cursorDisplayColIndex]);
 
   const headerOverlay = useMemo(() => {
     if (!tableContent) return { visible: false };
@@ -854,6 +859,30 @@ export function TablensApp({
   }, [state.selectionMode, cursorDisplayColIndex, sortDisplayColIndex, sorter?.direction, tableContent, displayColumnIndices, headers, colsOffset]);
 
   useKeyboard((key: KeyEvent) => {
+    if (!keyboardEnabled) return;
+    if (
+      onNavigateLeft &&
+      !state.showHelp &&
+      !state.showColumnFilter &&
+      !state.columnManagerActive &&
+      !state.searchActive &&
+      !state.colSearchActive &&
+      !state.renameActive &&
+      !state.savePathPromptActive &&
+      !state.queryEditorActive &&
+      !key.shift &&
+      (key.name === "left" || key.name === "h")
+    ) {
+      const firstColumn = displayColumnIndices[0];
+      const isAtLeftEdge =
+        state.selectionMode === "row"
+          ? state.colsOffset === 0
+          : firstColumn !== undefined && state.cursorCol === firstColumn;
+      if (isAtLeftEdge) {
+        onNavigateLeft();
+        return;
+      }
+    }
     handleTablensKey(key, {
       dispatch,
       renderer,
@@ -874,19 +903,18 @@ export function TablensApp({
   });
 
   return (
-    <>
+    <box
+      id="tablens-root"
+      width={termW}
+      height={termH}
+      flexDirection="column"
+    >
       <box
         id="table"
         top={0}
         left={0}
         width="100%"
-        height={(() => {
-          const consoleHeight =
-            renderer.console.visible && renderer.console.bounds?.height
-              ? Number(renderer.console.bounds.height) || 0
-              : 0;
-          return Math.max(1, renderer.terminalHeight - 1 - consoleHeight);
-        })()}
+        height={tableH}
       >
         {tableContent ? (
           <text
@@ -947,7 +975,6 @@ export function TablensApp({
       </box>
       <box
         id="status"
-        bottom={renderer.console.visible ? renderer.console.bounds.height : 0}
         left={0}
         width="100%"
         height={1}
@@ -1040,7 +1067,7 @@ export function TablensApp({
           initialQuery={queryEditorValue}
           onSubmit={handleQuerySubmit}
           loading={executingQuery}
-          termHeight={renderer.terminalHeight}
+          termHeight={termH}
           getAutocompleteSuggestions={(sql) => source.getAutocompleteSuggestions(sql)}
         />
       )}
@@ -1065,11 +1092,11 @@ export function TablensApp({
           windowStart={columnManagerWindowStart}
           stats={state.columnStats}
           loading={columnStatsLoading}
-          termWidth={renderer.terminalWidth}
-          termHeight={renderer.terminalHeight}
+          termWidth={termW}
+          termHeight={termH}
         />
       )}
       {state.showHelp && <HelpModal />}
-    </>
+    </box>
   );
 }

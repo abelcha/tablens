@@ -30,6 +30,11 @@ describe("Text Utils", () => {
       expect(wrapText(text, 5, true)).toEqual(["hello", "world"]);
     });
 
+    it("preserves explicit multiline cell breaks", () => {
+      expect(wrapText("first\n\nsecond", 20, false)).toEqual(["first", "", "second"]);
+      expect(wrapText("first\r\nsecond", 20, true)).toEqual(["first", "second"]);
+    });
+
     it("should char wrap if wordWrap is false", () => {
       const text = "hello world";
       // width 5: "hello", " worl", "d" (spaces included in char wrap usually? let's check impl)

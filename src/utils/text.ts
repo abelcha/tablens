@@ -73,52 +73,49 @@ function colorizeJson(text: string): string {
 export const RIGHT_PADDING = 1;
 export const NUM_SPACES_BETWEEN_COLUMNS = LEFT_PADDING + RIGHT_PADDING;
 
+/** Display-safe representation used when multiline mode is off. */
+export function displayCell(value: string, multiline: boolean): string {
+  return multiline ? value : value.replace(/\r\n|\r|\n/g, "↵");
+}
+
 export function wrapText(text: string, width: number, wordWrap: boolean): string[] {
   if (width <= 0) return ["…"];
   if (!text) return [""];
 
+  // Newlines are part of the cell value, not markup. Keep them as row breaks so
+  // they cannot escape the table and so blank lines remain visible.
   const lines: string[] = [];
-  if (wordWrap) {
-    const words = text.split(/(\s+)/);
-    let currentLine = "";
-    for (const word of words) {
-      if (!word) continue;
-
-      // If adding this word exceeds width
-      if (currentLine.length + word.length > width) {
-        // Push current line if it has content
-        if (currentLine.trim().length > 0) {
-          lines.push(currentLine.trimEnd());
-          currentLine = "";
-        }
-
-        // Handle the word itself
-        let w = word;
-        // If it starts with spaces and we're at the beginning of a line, skip those spaces
-        if (currentLine.length === 0) {
-          w = word.trimStart();
-        }
-
-        if (w.length > width) {
-          // Hard wrap the long word
+  for (const explicitLine of text.replace(/\r\n/g, "\n").split("\n")) {
+    if (explicitLine.length === 0) {
+      lines.push("");
+      continue;
+    }
+    if (wordWrap) {
+      const words = explicitLine.split(/(\s+)/);
+      let currentLine = "";
+      for (const word of words) {
+        if (!word) continue;
+        if (currentLine.length + word.length > width) {
+          if (currentLine.trim().length > 0) {
+            lines.push(currentLine.trimEnd());
+            currentLine = "";
+          }
+          let w = currentLine.length === 0 ? word.trimStart() : word;
           while (w.length > width) {
             lines.push(w.substring(0, width));
             w = w.substring(width);
           }
           currentLine = w;
         } else {
-          currentLine = w;
+          currentLine += word;
         }
-      } else {
-        currentLine += word;
       }
-    }
-    if (currentLine.trim().length > 0) {
-      lines.push(currentLine.trimEnd());
-    }
-  } else {
-    for (let i = 0; i < text.length; i += width) {
-      lines.push(text.substring(i, Math.min(text.length, i + width)));
+      if (currentLine.trim().length > 0) lines.push(currentLine.trimEnd());
+      else if (lines.length === 0 || lines[lines.length - 1] !== "") lines.push("");
+    } else {
+      for (let i = 0; i < explicitLine.length; i += width) {
+        lines.push(explicitLine.substring(i, Math.min(explicitLine.length, i + width)));
+      }
     }
   }
   return lines.length > 0 ? lines : [""];
@@ -288,6 +285,7 @@ export function buildRowLine(
   gutterWidth: number = 0,
   matches?: boolean[],
   marked: boolean = false,
+  multiline: boolean = false,
 ) {
   let line = "";
 
@@ -305,12 +303,13 @@ export function buildRowLine(
   }
 
   widths.forEach((width, colIdx) => {
-    const cell = row[colIdx] || "";
+    const cell = displayCell(row[colIdx] || "", multiline);
     let text = "";
     const usableWidth = Math.max(0, width - NUM_SPACES_BETWEEN_COLUMNS);
 
     if (wrapMode === "disabled") {
-      text = lineIdx === 0 ? cell : "";
+      // A literal newline is a cell-internal line break, never a terminal row break.
+      text = cell.replace(/\r\n/g, "\n").split("\n")[lineIdx] || "";
     } else {
       const wrapped = wrapText(cell, usableWidth, wrapMode === "words");
       text = wrapped[lineIdx] || "";

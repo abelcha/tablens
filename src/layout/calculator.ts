@@ -118,7 +118,10 @@ export function redistributeWidthsAfterClipping(
 
 export function computeRowHeights(rows: string[][], columnWidths: number[], wrapMode: WrapMode) {
   if (wrapMode === "disabled") {
-    return rows.map(() => 1);
+    // Explicit newlines still occupy display rows even when soft wrapping is off.
+    return rows.map((row) =>
+      Math.max(1, ...row.map((cell) => String(cell ?? "").replace(/\r\n/g, "\n").split("\n").length)),
+    );
   }
 
   return rows.map((row) => {

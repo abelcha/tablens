@@ -95,6 +95,7 @@ export function initialState(): ExtendedState {
     visibleMatches: [],
     sorter: null,
     wrapMode: "disabled",
+    multilineMode: false,
     columnOverrides: {},
     headers: [],
     totalRowCount: 0,
@@ -588,6 +589,8 @@ export function reducer(state: ExtendedState, action: Action): ExtendedState {
       return { ...state, queryEditorActive: false };
     case "SET_VISIBLE_ROWS":
       return { ...state, visibleRows: action.rows, visibleRowIds: action.rowIds ?? [] };
+    case "TOGGLE_MULTILINE":
+      return { ...state, multilineMode: !state.multilineMode };
     case "TOGGLE_SHOW_TYPES":
       return { ...state, showTypes: !state.showTypes };
     case "SET_COLUMN_TYPES":

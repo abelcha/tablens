@@ -34,6 +34,7 @@ export interface State {
   visibleMatches: boolean[][];
   sorter: { column: number; direction: "asc" | "desc"; nulls: "last" | "first" } | null;
   wrapMode: WrapMode;
+  multilineMode: boolean;
   columnOverrides: Record<number, number>;
   visibleRows: string[][];
   totalRowCount: number;

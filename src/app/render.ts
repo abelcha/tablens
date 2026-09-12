@@ -10,6 +10,7 @@ import {
   buildRowLine,
 } from "src/utils/text";
 import { parseInlineMarkup } from "src/app/markup";
+import { displayCell } from "src/utils/text";
 export { computeHeaderOverlay } from "src/app/headerOverlay";
 
 export interface TableContentModel {
@@ -29,6 +30,7 @@ export function computeTableContentModel(args: {
   rowsOffset: number;
   colsOffset: number;
   wrapMode: WrapMode;
+  multilineMode?: boolean;
   columnOverrides: Record<number, number>;
   termW: number;
   termH: number;
@@ -80,9 +82,10 @@ export function computeTableContentModel(args: {
     if (i >= colsOffset) adjustedOverrides[i - colsOffset] = width;
   }
 
+  const displayRows = visibleRows.map((r) => r.map((cell) => displayCell(cell, args.multilineMode ?? false)));
   const fullColWidths = computeColumnWidths(
     headers.slice(colsOffset),
-    visibleRows.map((r) => r.slice(colsOffset)),
+    displayRows.map((r) => r.slice(colsOffset)),
     tableW,
     adjustedOverrides,
     columnWidthMode ?? "compact",
@@ -118,7 +121,7 @@ export function computeTableContentModel(args: {
       : undefined;
 
   const rowHeights = computeRowHeights(
-    visibleRows.map((r) => r.slice(colsOffset, colsOffset + visibleColCount)),
+    displayRows.map((r) => r.slice(colsOffset, colsOffset + visibleColCount)),
     colWidths,
     wrapMode,
   );
@@ -189,7 +192,7 @@ export function computeTableContentModel(args: {
         const rowId = visRowIds[i];
         const isMarked = rowId !== undefined ? markedRows?.has(rowId) === true : false;
         return Array.from({ length: visHeights[i] || 1 }, (_, h) =>
-          buildRowLine(r, colWidths, wrapMode, h, rowNum, gutterWidth, visMatches?.[i], isMarked),
+          buildRowLine(r, colWidths, wrapMode, h, rowNum, gutterWidth, visMatches?.[i], isMarked, args.multilineMode ?? false),
         ).join("");
       })
       .join("") +

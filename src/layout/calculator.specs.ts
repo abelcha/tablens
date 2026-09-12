@@ -112,11 +112,11 @@ describe("Layout Calculator", () => {
   });
 
   describe("computeRowHeights", () => {
-    it("should return 1 for disabled wrap", () => {
+    it("should account for explicit newlines when wrapping is disabled", () => {
       const rows = [["a\nb", "c"]];
       const widths = [10, 10];
       const heights = computeRowHeights(rows, widths, "disabled");
-      expect(heights).toEqual([1]);
+      expect(heights).toEqual([2]);
     });
 
     it("should calculate height based on wrapping", () => {

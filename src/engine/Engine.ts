@@ -1,8 +1,26 @@
 import { createHash } from "node:crypto";
 import { basename, join } from "node:path";
-import { appendFileSync, mkdtempSync, rmSync, statSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+
+function splitSqlStatements(sql: string): string[] {
+  const statements: string[] = [];
+  let start = 0, quote = false, lineComment = false, blockComment = false;
+  for (let i = 0; i < sql.length; i++) {
+    const c = sql[i], n = sql[i + 1];
+    if (lineComment) { if (c === "\\n") lineComment = false; continue; }
+    if (blockComment) { if (c === "*" && n === "/") { blockComment = false; i++; } continue; }
+    if (!quote && c === "-" && n === "-") { lineComment = true; i++; continue; }
+    if (!quote && c === "/" && n === "*") { blockComment = true; i++; continue; }
+    if (c === "'") { if (quote && n === "'") { i++; continue; } quote = !quote; }
+    else if (c === ";" && !quote) { const s = sql.slice(start, i).trim(); if (s) statements.push(s); start = i + 1; }
+  }
+  const tail = sql.slice(start).trim();
+  if (tail) statements.push(tail);
+  return statements;
+}
 import { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
+import { DB_ALIAS, attachDatabase } from "./db";
 import type {
   ColumnDistributionRequest,
   ColumnDistributionResult,
@@ -175,15 +193,36 @@ export class Engine implements TablensEngine {
   private async loadUserMacros(): Promise<void> {
     if (!this.executor) return;
     const dir = join(homedir(), ".config", "duckdb");
-    for (const name of ["utils.sql", "macros.sql", "config.sql", "names.sql"]) {
+    for (const name of ['convo.sql',"utils.sql", "macros.sql", "config.sql", "names.sql"]) {
       const filePath = join(dir, name);
       if (!existsSync(filePath)) continue;
       try {
         const sql = readFileSync(filePath, "utf8").trim();
-        if (sql) await this.executor.run(sql);
+        if (!sql) continue;
+
+        // DuckDB aborts a multi-statement batch on one incompatible statement.
+        // Keep earlier macros (for example convo.preview) available and continue
+        // loading the remaining statements independently.
+        const statements = splitSqlStatements(sql);
+        for (const statement of statements) {
+          try {
+            await this.executor.run(statement);
+          } catch (err) {
+            console.warn(`tablens: failed statement in ${filePath}:`, err);
+          }
+        }
       } catch (err) {
         console.warn(`tablens: failed to load ${filePath}:`, err);
       }
+    }
+
+    // Keep the commonly used transcript helper available even when a user's
+    // larger convo.sql contains views unsupported by this DuckDB build.
+    try {
+      await this.executor.run(`CREATE SCHEMA IF NOT EXISTS convo`);
+      await this.executor.run(`CREATE OR REPLACE MACRO convo.preview(t, lines := 6, width := 120) AS array_to_string([CASE WHEN length(l) > width THEN l[1:width] || '…' ELSE l END for l IN str_split(coalesce(t, ''), chr(10))][1:lines], chr(10))`);
+    } catch (err) {
+      console.warn("tablens: failed to install built-in convo.preview:", err);
     }
   }
 
@@ -457,6 +496,19 @@ export class Engine implements TablensEngine {
       await this.executor.run(
         `COPY (SELECT * FROM ${readFunc}) TO ${this.sqlLiteral(this.activeParquetPath)} (FORMAT PARQUET)`,
       );
+    } else if (input.kind === "db") {
+      this.activeParquetPath = join(
+        this.getTempDir(),
+        `${basename(input.path)}.${input.table}.parquet`,
+      );
+      this.ownsActiveParquet = true;
+      this.currentSourceQuery = null;
+
+      await attachDatabase(this.executor, input.path, DB_ALIAS);
+      await this.executor.run(
+        `COPY (SELECT * FROM ${DB_ALIAS}.${this.quoteIdent(input.table)}) TO ${this.sqlLiteral(this.activeParquetPath)} (FORMAT PARQUET)`,
+      );
+      await this.executor.run(`DETACH ${DB_ALIAS}`);
     } else {
       this.activeParquetPath = join(this.getTempDir(), "query.parquet");
       this.ownsActiveParquet = true;

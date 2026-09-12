@@ -67,6 +67,10 @@ export function keyToActions(
     case "c":
       actions.push({ type: "CYCLE_COLUMN_WIDTH_MODE" });
       break;
+    case "m":
+    case "M":
+      actions.push({ type: "TOGGLE_MULTILINE" });
+      break;
     case ">":
     case ".":
       if (key.name === ">" || key.name === ".") {

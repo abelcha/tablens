@@ -1,11 +1,15 @@
 #!/usr/bin/env -S bun run
 import { createElement } from "react";
 import { parseArgs } from "node:util";
+import { statSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { ConsolePosition, createCliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
 import { Engine } from "src/engine/Engine";
 import { buildEngineInput } from "src/engine/openInput";
 import { TablensApp } from "src/index";
+import { DirectoryMode } from "src/directory/DirectoryMode";
+import { sniffDbFlavor } from "src/engine/db";
 import { formatError } from "src/utils/error";
 
 export async function launchTablens(options: { file: string; query?: string }) {
@@ -43,7 +47,14 @@ export async function launchTablens(options: { file: string; query?: string }) {
   );
 }
 
-export async function launchDirectory(rootPath: string) {
+export async function launchDirectory(
+  rootPath: string,
+  options: {
+    initialPath?: string;
+    initialFocus?: "tree" | "preview";
+    initialTreeVisible?: boolean;
+  } = {},
+) {
   const renderer = await createCliRenderer({
     exitOnCtrlC: true,
     targetFps: 40,
@@ -59,7 +70,7 @@ export async function launchDirectory(rootPath: string) {
   });
 
   createRoot(renderer).render(
-    createElement(DirectoryMode, { rootPath }),
+    createElement(DirectoryMode, { rootPath, ...options }),
   );
 }
 
@@ -84,18 +95,29 @@ async function main() {
 ${"tablen".padEnd(14)}  Terminal data viewer powered by DuckDB
 
 Usage:
-  bun run index.ts [file] [options]
+  bun run index.ts [file-or-dir] [options]
 
 Arguments:
-  file              Path to CSV, Parquet, or JSON file
+  file-or-dir      Path to a CSV, Parquet or JSON file, a SQLite/DuckDB
+                   database, or a directory. Directories and databases open
+                   a broot-like explorer with live preview.
 
 Options:
   -q, --query <sql> Execute SQL query instead of loading file
   -h, --help        Show this help message
 
-Keyboard shortcuts (in app):
+Explorer shortcuts:
+  ↑/↓ j/k          Navigate tree
+  →/↵ l            Expand dir or database / open preview
+  ← h              Collapse / move to parent
+  /                Filter tree by name
+  Tab              Toggle focus between tree and preview
+  q/C-c            Quit
+
+Table shortcuts (in app):
   q/C-c              Quit
   j/k / arrows      Navigate
+  ← at first column  Open the parent-directory browser
   /                  Search
   f                  Filter column (column mode)
   t                  Toggle column types
@@ -114,7 +136,42 @@ Keyboard shortcuts (in app):
     file = "data.csv";
   }
 
+  // Direct tabular files start as a full-width table. At the left edge, the
+  // table reveals this parent-directory explorer with the file still selected.
+  if (!query && file) {
+    const resolved = resolve(file);
+    let isDir = false;
+    try {
+      isDir = statSync(resolved).isDirectory();
+    } catch {
+      // not found — fall through to engine which will surface the error.
+    }
+    const kind = classifyPathForLaunch(resolved, isDir);
+    if (isDir || sniffDbFlavor(resolved)) {
+      await launchDirectory(resolved);
+      return;
+    }
+    if (kind === "tabular") {
+      await launchDirectory(dirname(resolved), {
+        initialPath: resolved,
+        initialFocus: "preview",
+        initialTreeVisible: false,
+      });
+      return;
+    }
+  }
+
   await launchTablens({ file: file || "data.csv", query });
+}
+
+function classifyPathForLaunch(path: string, isDir: boolean) {
+  // Keep the CLI routing independent of the React tree module's rendering code.
+  const extension = path.toLowerCase().slice(path.lastIndexOf("."));
+  return [".csv", ".tsv", ".parquet", ".json", ".jsonl", ".ndjson"].includes(extension)
+    ? "tabular"
+    : isDir
+      ? "dir"
+      : "other";
 }
 
 if (import.meta.main) {

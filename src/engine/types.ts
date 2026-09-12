@@ -59,6 +59,7 @@ export type ViewHashInput = {
 export type EngineInput =
   | { kind: "parquet"; path: string }
   | { kind: "file"; path: string }
+  | { kind: "db"; path: string; table: string }
   | { kind: "query"; sql: string; basePath?: string };
 
 export type EngineSchema = {

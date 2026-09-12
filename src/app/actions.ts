@@ -41,6 +41,7 @@ export type Action =
   | { type: "SET_QUERY_EDITOR_VALUE"; query: string }
   | { type: "CLOSE_QUERY_EDITOR" }
   | { type: "SET_VISIBLE_ROWS"; rows: string[][]; rowIds?: number[] }
+  | { type: "TOGGLE_MULTILINE" }
   | { type: "TOGGLE_SHOW_TYPES" }
   | { type: "SET_COLUMN_TYPES"; types: string[] }
   | { type: "TOGGLE_SHOW_STATS" }
