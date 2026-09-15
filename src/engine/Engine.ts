@@ -19,6 +19,10 @@ function splitSqlStatements(sql: string): string[] {
   if (tail) statements.push(tail);
   return statements;
 }
+
+function removeCliDirectives(sql: string): string {
+  return sql.replace(/^[ \t]*\.[^\r\n]*(?:\r?\n|$)/gm, "");
+}
 import { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
 import { DB_ALIAS, attachDatabase } from "./db";
 import type {
@@ -197,7 +201,8 @@ export class Engine implements TablensEngine {
       const filePath = join(dir, name);
       if (!existsSync(filePath)) continue;
       try {
-        const sql = readFileSync(filePath, "utf8").trim();
+        const rawSql = readFileSync(filePath, "utf8");
+        const sql = (name === "config.sql" ? removeCliDirectives(rawSql) : rawSql).trim();
         if (!sql) continue;
 
         // DuckDB aborts a multi-statement batch on one incompatible statement.
