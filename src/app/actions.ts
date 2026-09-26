@@ -5,6 +5,8 @@ export type Action =
   | { type: "MOVE_RIGHT"; visibleColumns?: number[] }
   | { type: "PAGE_UP"; pageSize: number }
   | { type: "PAGE_DOWN"; pageSize: number }
+  | { type: "HOME"; pageSize: number }
+  | { type: "END"; pageSize: number }
   | { type: "CYCLE_SELECTION_MODE" }
   | { type: "INC_COUNTER" }
   | { type: "SET_TOTAL_ROW_COUNT"; count: number }

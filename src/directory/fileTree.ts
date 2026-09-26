@@ -151,7 +151,19 @@ export function buildVisibleList(
     }
     for (const child of children) walk(child);
   };
-  walk(rootNode);
+
+  if (rootNode.kind === "dir") {
+    // The directory passed to `tablens dir` is the browser's container, not
+    // an item the user needs to navigate to. Show its children at the top
+    // level while keeping their descendants at their normal depths.
+    const children = childrenCache.get(rootNode.path) ?? readChildren(rootNode.path, 1);
+    childrenCache.set(rootNode.path, children);
+    for (const child of children) {
+      walk({ ...child, depth: 0, parentPath: null });
+    }
+  } else {
+    walk(rootNode);
+  }
   return out;
 }
 

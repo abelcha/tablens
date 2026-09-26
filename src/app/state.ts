@@ -284,6 +284,19 @@ export function reducer(state: ExtendedState, action: Action): ExtendedState {
       next.rowsOffset = Math.max(0, Math.min(maxRows - 1, next.rowsOffset));
       return applyVerticalScroll(state, next);
     }
+    case "HOME": {
+      const next = { ...state, cursorRow: 0, rowsOffset: 0 };
+      return applyVerticalScroll(state, next);
+    }
+    case "END": {
+      const next = { ...state };
+      const maxRows =
+        state.searchMatchRowCount !== null ? state.searchMatchRowCount : state.totalRowCount;
+      const lastRow = Math.max(0, maxRows - 1);
+      next.cursorRow = lastRow;
+      next.rowsOffset = Math.max(0, maxRows - action.pageSize);
+      return applyVerticalScroll(state, next);
+    }
     case "CLEAR_SCROLL_SPEED":
       return { ...state, scrollRowsPerSec: null, scrollBenchAt: 0 };
     case "CYCLE_SELECTION_MODE": {

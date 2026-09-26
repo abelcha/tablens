@@ -76,6 +76,8 @@ export function TextPreview({
     else if (key.name === "up" || key.name === "k") by(-1);
     else if (key.name === "pagedown" || (key.ctrl && key.name === "d")) by(bodyHeight);
     else if (key.name === "pageup" || (key.ctrl && key.name === "u")) by(-bodyHeight);
+    else if (key.name === "end") setScroll(maxScroll);
+    else if (key.name === "home") setScroll(0);
     else if (key.name === "g") setScroll(key.shift ? maxScroll : 0);
   });
 

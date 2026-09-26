@@ -389,6 +389,14 @@ export function DirectoryMode({
       moveCursor(listHeight);
       return;
     }
+    if (key.name === "home") {
+      if (visibleNodes.length > 0) setCursorPath(visibleNodes[0]!.path);
+      return;
+    }
+    if (key.name === "end") {
+      if (visibleNodes.length > 0) setCursorPath(visibleNodes[visibleNodes.length - 1]!.path);
+      return;
+    }
     if (key.name === "g") {
       const target = key.shift ? visibleNodes[visibleNodes.length - 1] : visibleNodes[0];
       setCursorPath(target?.path ?? cursorPath);

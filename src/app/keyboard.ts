@@ -61,6 +61,12 @@ export function keyToActions(
     case "pagedown":
       actions.push({ type: "PAGE_DOWN", pageSize: ctx.pageSize });
       break;
+    case "home":
+      actions.push({ type: "HOME", pageSize: ctx.pageSize });
+      break;
+    case "end":
+      actions.push({ type: "END", pageSize: ctx.pageSize });
+      break;
     case "tab":
       actions.push({ type: "CYCLE_SELECTION_MODE" });
       break;
