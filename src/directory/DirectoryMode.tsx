@@ -1,7 +1,7 @@
 /** @jsxImportSource @opentui/react */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { basename } from "node:path";
-import { statSync } from "node:fs";
+import { createReadStream, statSync } from "node:fs";
 import { type KeyEvent } from "@opentui/core";
 import { useKeyboard, useRenderer } from "@opentui/react";
 import { Engine } from "src/engine/Engine";
@@ -15,8 +15,9 @@ import {
   readChildren,
   type TreeNode,
 } from "src/directory/fileTree";
-import { listDbTables } from "src/engine/db";
+import { countDbTablesRows, listDbTables } from "src/engine/db";
 import { TextPreview } from "src/directory/TextPreview";
+import { LoadingSkeleton } from "src/app/components/EmptyState";
 import { formatError } from "src/utils/error";
 
 declare module "@opentui/react" {
@@ -35,6 +36,8 @@ type PreviewState =
   | { kind: "text"; file: string }
   | { kind: "binary"; file: string }
   | { kind: "error"; file: string; message: string };
+
+type TreeInfoMode = "none" | "size" | "lines";
 
 /** Only panes that respond to keys are worth focusing — an error/idle pane is not. */
 function canFocusPreview(preview: PreviewState): boolean {
@@ -80,17 +83,22 @@ export function DirectoryMode({
   });
   const [focus, setFocus] = useState<"tree" | "preview">(initialFocus);
   const [treeVisible, setTreeVisible] = useState(initialTreeVisible);
+  const [treeWidth, setTreeWidth] = useState(32);
+  const [treeInfoMode, setTreeInfoMode] = useState<TreeInfoMode>("none");
+  const [lineCounts, setLineCounts] = useState<Map<string, number>>(new Map());
   const [preview, setPreview] = useState<PreviewState>({ kind: "idle" });
   const [filter, setFilter] = useState<string>("");
   const [filterActive, setFilterActive] = useState(false);
 
-  const engineRef = useRef<Engine | null>(null);
+  // Keep opened tables alive while navigating the explorer.
+  const enginesRef = useRef<Map<string, Engine>>(new Map());
+  const previewLoadRef = useRef(0);
 
   // Close engine on unmount.
   useEffect(() => {
     return () => {
-      engineRef.current?.close().catch(() => {});
-      engineRef.current = null;
+      for (const engine of enginesRef.current.values()) engine.close().catch(() => {});
+      enginesRef.current.clear();
     };
   }, []);
 
@@ -163,9 +171,41 @@ export function DirectoryMode({
     };
   }, [visibleAll, expanded, childrenCache]);
 
+  // Load line counts only when requested and keep them cached for this explorer.
+  useEffect(() => {
+    if (treeInfoMode !== "lines") return;
+    let cancelled = false;
+    void (async () => {
+      const tableGroups = new Map<string, TreeNode[]>();
+      for (const node of visibleAll) {
+        if (node.kind === "table" && !lineCounts.has(node.path)) {
+          const group = tableGroups.get(node.dbPath!) ?? [];
+          group.push(node);
+          tableGroups.set(node.dbPath!, group);
+        }
+      }
+      for (const [dbPath, nodes] of tableGroups) {
+        if (cancelled) return;
+        const counts = await countDbTablesRows(dbPath, nodes.map((node) => node.table!));
+        if (!cancelled) setLineCounts((prev) => {
+          const next = new Map(prev);
+          for (const node of nodes) next.set(node.path, counts.get(node.table!) ?? 0);
+          return next;
+        });
+      }
+      for (const node of visibleAll) {
+        if (cancelled || node.kind === "dir" || node.kind === "table" || lineCounts.has(node.path)) continue;
+        const count = await countLines(node.path);
+        if (!cancelled) setLineCounts((prev) => new Map(prev).set(node.path, count));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [treeInfoMode, visibleAll, lineCounts]);
+
   // ---- Preview loading (debounced) ----------------------------------------
   const previewKey = previewKeyFor(cursorNode);
   useEffect(() => {
+    const loadId = ++previewLoadRef.current;
     if (!cursorNode || previewKey === null) {
       setPreview({ kind: "idle" });
       return;
@@ -184,6 +224,12 @@ export function DirectoryMode({
     const node = cursorNode;
     const label = node.kind === "table" ? `${basename(node.dbPath!)} › ${node.table}` : node.name;
 
+    const cachedEngine = enginesRef.current.get(previewKey);
+    if (cachedEngine) {
+      setPreview({ kind: "table", file: previewKey, label, engine: cachedEngine });
+      return;
+    }
+
     // Already showing this? Keep it — avoids remount thrash on focus changes.
     setPreview((prev) =>
       prev.kind === "table" && prev.file === previewKey
@@ -192,9 +238,6 @@ export function DirectoryMode({
     );
 
     const handle = setTimeout(async () => {
-      const cur = previewRef.current;
-      if (engineRef.current && cur.kind === "table" && cur.file === previewKey) return;
-
       const engine = new Engine();
       try {
         const input =
@@ -202,8 +245,11 @@ export function DirectoryMode({
             ? ({ kind: "db", path: node.dbPath!, table: node.table! } as const)
             : buildEngineInput(node.path);
         await engine.open(input);
-        await engineRef.current?.close().catch(() => {});
-        engineRef.current = engine;
+        if (previewLoadRef.current !== loadId) {
+          await engine.close().catch(() => {});
+          return;
+        }
+        enginesRef.current.set(previewKey, engine);
         setPreview({ kind: "table", file: previewKey, label, engine });
       } catch (err) {
         await engine.close().catch(() => {});
@@ -229,8 +275,9 @@ export function DirectoryMode({
   const termH = Math.max(1, renderer.terminalHeight - consoleHeight);
   const termW = renderer.terminalWidth;
 
-  const treeWidth = Math.max(24, Math.min(46, Math.floor(termW * 0.32)));
-  const previewWidth = Math.max(10, termW - treeWidth - 1); // -1 for divider
+  const maxTreeWidth = Math.max(24, Math.min(60, termW - 12));
+  const boundedTreeWidth = Math.max(24, Math.min(maxTreeWidth, treeWidth));
+  const previewWidth = Math.max(10, termW - boundedTreeWidth - 1); // -1 for divider
   const activePreviewWidth = treeVisible ? previewWidth : termW;
   const headerHeight = 1;
   const listHeight = Math.max(1, termH - headerHeight - 1); // -1 for footer
@@ -276,6 +323,21 @@ export function DirectoryMode({
     // Console toggle passthrough.
     if (key.name === "`") {
       renderer.console.toggle();
+      return;
+    }
+
+    const isWider = key.name === ">" || key.raw === ">";
+    const isNarrower = key.name === "<" || key.raw === "<";
+    if (isWider || isNarrower) {
+      setTreeWidth((width) => Math.max(24, Math.min(maxTreeWidth, width + (isWider ? 2 : -2))));
+      return;
+    }
+    if (key.name === "v") {
+      setTreeVisible((visible) => !visible);
+      return;
+    }
+    if (key.name === "s" || key.name === "i") {
+      setTreeInfoMode((mode) => mode === "none" ? "size" : mode === "size" ? "lines" : "none");
       return;
     }
 
@@ -336,11 +398,15 @@ export function DirectoryMode({
     if (!cursorNode) return;
 
     if (key.name === "right" || key.name === "l" || key.name === "return" || key.name === "enter") {
-      // Expandable nodes toggle; a second press on an already-open one enters the preview.
+      // Right enters an available preview immediately. Expandable nodes that
+      // do not have a preview yet still use the first press to expand.
+      if (canFocusPreview(previewRef.current)) {
+        setFocus("preview");
+        return;
+      }
+      // Expandable nodes without a preview use Right to toggle their children.
       if (isExpandable(cursorNode) && !expanded.has(cursorNode.path)) {
         toggleExpand(cursorNode);
-      } else if (canFocusPreview(previewRef.current)) {
-        setFocus("preview");
       } else if (isExpandable(cursorNode)) {
         toggleExpand(cursorNode);
       }
@@ -365,22 +431,28 @@ export function DirectoryMode({
     const isCursor = idx === cursorIndex;
     const indent = "  ".repeat(node.depth);
     const arrow = isExpandable(node) ? (expanded.has(node.path) ? "▾" : "▸") : " ";
-    const label = `${indent}${arrow} ${iconForNode(node)} ${node.name}`;
-    const fg = isCursor
-      ? "#000000"
-      : node.kind === "dir"
-        ? "#8ab4f8"
-        : node.kind === "db"
-          ? "#e0af68"
-          : node.kind === "table"
-            ? "#7dcfff"
-            : node.kind === "binary"
-              ? "#6e7681"
-              : "#c0c0c0";
-    const bg = isCursor ? (focus === "tree" ? "#ffd33d" : "#555555") : undefined;
+    const infoValue = treeInfoMode === "size"
+      ? fileSize(node.path)
+      : treeInfoMode === "lines" && node.kind !== "dir"
+        ? lineCounts.get(node.path)
+        : undefined;
+    const info = infoValue === undefined ? "…" : compactNumber(infoValue);
+    const hasInfo = treeInfoMode !== "none" && (node.kind !== "dir" || treeInfoMode === "size");
+    const infoWidth = hasInfo ? 6 : 0;
+    const label = `${indent}${arrow} ${node.name}`;
+    const labelWidth = Math.max(1, boundedTreeWidth - infoWidth);
+    const fg = isCursor ? "#000000" : "#c0c0c0";
+    const bg = isCursor ? (focus === "tree" ? "#ffd33d" : "#252b33") : undefined;
     return (
-      <box key={node.path} width="100%" height={1} backgroundColor={bg}>
-        <text content={truncate(label, treeWidth - 1)} fg={fg} />
+      <box key={node.path} width="100%" height={1} backgroundColor={bg} flexDirection="row">
+        {hasInfo ? (
+          <text
+            width={infoWidth}
+            content={` ${info}`}
+            fg={isCursor ? fg : infoColor(infoValue ?? 0, treeInfoMode)}
+          />
+        ) : null}
+        <text width={labelWidth} content={truncate(label, labelWidth)} fg={fg} />
       </box>
     );
   });
@@ -422,7 +494,7 @@ export function DirectoryMode({
           />
         );
       case "loading":
-        return <CenteredMessage icon="◌" title={`Loading ${shortPath(preview.file, rootPath)}…`} />;
+        return <LoadingSkeleton width={activePreviewWidth} height={termH - 1} />;
       case "error":
         return (
           <CenteredMessage
@@ -447,7 +519,7 @@ export function DirectoryMode({
 
   const footerText =
     focus === "tree"
-      ? `{grey}↑/↓ navigate · →/↵ expand/open · ← collapse · / filter · Tab preview · q quit{/grey}`
+      ? `{grey}↑/↓ navigate · →/↵ expand/open · ← collapse · </> width · i info:${treeInfoMode} · v sidebar · / filter · Tab preview · q quit{/grey}`
       : preview.kind === "table"
         ? `{grey}← at first column / Tab opens files · all tablens shortcuts active{/grey}`
         : `{grey}Tab back to tree · j/k scroll · g/G top/bottom{/grey}`;
@@ -459,15 +531,14 @@ export function DirectoryMode({
         {treeVisible ? (
           <>
             <box
-              width={treeWidth}
+              width={boundedTreeWidth}
               height={termH - 1}
               flexDirection="column"
-              backgroundColor="#0d1117"
             >
-              <box width="100%" height={headerHeight} backgroundColor="#161b22">
+              <box width="100%" height={headerHeight}>
                 <text
                   content={parseMarkup(
-                    ` {bold}{#8ab4f8}📁 ${shortPath(rootPath, rootPath)}{/}{/bold}` +
+                    ` {bold}${shortPath(rootPath, rootPath)}{/bold}` +
                       (filterActive ? ` {grey}/ ${filter}{/grey}` : ""),
                   )}
                 />
@@ -480,7 +551,7 @@ export function DirectoryMode({
                 )}
               </box>
             </box>
-            <box width={1} height={termH - 1} backgroundColor="#30363d" />
+            <box width={1} height={termH - 1} backgroundColor="#303238" />
           </>
         ) : null}
 
@@ -603,6 +674,26 @@ function fileSize(path: string): number {
   }
 }
 
+/** Count logical text lines without loading the whole file into memory. */
+async function countLines(path: string): Promise<number> {
+  return await new Promise((resolve) => {
+    let lines = 0;
+    let bytes = 0;
+    let lastByte = -1;
+    const stream = createReadStream(path);
+    stream.on("data", (chunk: Buffer | string) => {
+      const buffer = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+      bytes += buffer.length;
+      for (const byte of buffer) {
+        if (byte === 10) lines++;
+        lastByte = byte;
+      }
+    });
+    stream.on("end", () => resolve(bytes === 0 ? 0 : lines + (lastByte === 10 ? 0 : 1)));
+    stream.on("error", () => resolve(0));
+  });
+}
+
 function formatBytes(bytes: number): string {
   const units = ["B", "KB", "MB", "GB", "TB"];
   let value = bytes;
@@ -612,6 +703,28 @@ function formatBytes(bytes: number): string {
     unit++;
   }
   return `${unit === 0 ? value : value.toFixed(1)} ${units[unit]}`;
+}
+
+function compactNumber(value: number): string {
+  if (value < 1_000) return String(value);
+  if (value < 1_000_000) return `${(value / 1_000).toFixed(value < 10_000 ? 1 : 0)}K`;
+  if (value < 1_000_000_000) return `${(value / 1_000_000).toFixed(value < 10_000_000 ? 1 : 0)}M`;
+  return `${(value / 1_000_000_000).toFixed(value < 10_000_000_000 ? 1 : 0)}B`;
+}
+
+function infoColor(value: number, mode: TreeInfoMode): string {
+  if (mode === "size") {
+    if (value < 1024) return "#8b949e";
+    if (value < 1024 ** 2) return "#58a6ff";
+    if (value < 100 * 1024 ** 2) return "#3fb950";
+    if (value < 1024 ** 3) return "#d29922";
+    return "#f85149";
+  }
+  if (value < 1_000) return "#8b949e";
+  if (value < 100_000) return "#58a6ff";
+  if (value < 1_000_000) return "#3fb950";
+  if (value < 10_000_000) return "#d29922";
+  return "#f85149";
 }
 
 function truncate(s: string, max: number): string {

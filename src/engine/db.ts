@@ -30,6 +30,7 @@ export function sniffDbFlavor(path: string): DbFlavor {
 }
 
 const literal = (value: string) => `'${value.replaceAll(`'`, `''`)}'`;
+const identifier = (value: string) => `"${value.replaceAll(`"`, `""`)}"`;
 
 /** ATTACH a SQLite or DuckDB file read-only under `alias`. */
 export async function attachDatabase(
@@ -65,6 +66,32 @@ export async function listDbTables(path: string): Promise<string[]> {
     );
     const rows = await result.getRows();
     return rows.map((row) => String(row[0]));
+  } finally {
+    connection.closeSync?.();
+  }
+}
+
+/** Count rows in a table/view for the directory tree's line-count indicator. */
+export async function countDbTableRows(path: string, table: string): Promise<number> {
+  const counts = await countDbTablesRows(path, [table]);
+  return counts.get(table) ?? 0;
+}
+
+/** Count multiple tables with one read-only attachment. */
+export async function countDbTablesRows(path: string, tables: string[]): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  if (tables.length === 0) return counts;
+  const instance = await DuckDBInstance.create();
+  const connection = await instance.connect();
+  const executor = { run: (sql: string) => connection.run(sql) } as unknown as SqlExecutor;
+  try {
+    await attachDatabase(executor, path, DB_ALIAS);
+    const result = await connection.run(tables.map((table) =>
+      `SELECT ${literal(table)} AS table_name, COUNT(*) AS row_count FROM ${identifier(DB_ALIAS)}.${identifier(table)}`,
+    ).join(" UNION ALL "));
+    const rows = await result.getRows();
+    for (const row of rows) counts.set(String(row[0]), Number(row[1] ?? 0));
+    return counts;
   } finally {
     connection.closeSync?.();
   }

@@ -1,16 +1,23 @@
 /** @jsxImportSource @opentui/react */
 import React from "react";
 import { parseInlineMarkup } from "src/app/markup";
+import { useRenderer } from "@opentui/react";
 
 export function EmptyState({
   type,
   query,
   message,
+  width,
+  height,
 }: {
   type: "loading" | "no-results" | "empty-file" | "error" | "no-columns";
   query?: string;
   message?: string;
+  width?: number;
+  height?: number;
 }) {
+  if (type === "loading") return <LoadingSkeleton width={width} height={height} />;
+
   let title = "";
   let sub = "";
   let footer = " Press ESC to clear search or Q to quit ";
@@ -59,6 +66,55 @@ export function EmptyState({
       )}
       {sub && <text content={parseInlineMarkup(sub)} fg="#666666" marginTop={0} />}
       <text content={parseInlineMarkup(footer)} fg="#444444" marginTop={2} />
+    </box>
+  );
+}
+
+/** Keep loading visually anchored to the same table geometry as loaded data. */
+export function LoadingSkeleton({ width: paneWidth, height: paneHeight }: { width?: number; height?: number }) {
+  const renderer = useRenderer();
+  const height = Math.max(8, paneHeight ?? renderer.terminalHeight - 2);
+  const columns = ["12%", "15%", "14%", "22%", "37%"];
+  const rowCount = Math.max(1, height - 5);
+
+  return (
+    <box
+      width={paneWidth ?? "100%"}
+      height="100%"
+      flexDirection="column"
+      border={true}
+      borderStyle="single"
+      borderColor="#454545"
+    >
+      <SkeletonRow columns={columns} header />
+      <box width="100%" height={1} backgroundColor="#3a3a3a" />
+      <box width="100%" flexGrow={1} flexDirection="column">
+        {Array.from({ length: rowCount }, (_, row) => (
+          <SkeletonRow key={row} columns={columns} row={row} />
+        ))}
+      </box>
+      <box width="100%" height={1} backgroundColor="#3a3a3a" />
+      <box width="100%" height={1} backgroundColor="#252525" />
+    </box>
+  );
+}
+
+function SkeletonRow({
+  columns,
+  header = false,
+  row = 0,
+}: {
+  columns: string[];
+  header?: boolean;
+  row?: number;
+}) {
+  return (
+    <box width="100%" height={1} flexDirection="row" backgroundColor={header ? "#292929" : undefined}>
+      <box width="5%" height={1}>
+      </box>
+      {columns.map((width, index) => (
+        <box key={index} width={width as any} height={1} />
+      ))}
     </box>
   );
 }

@@ -150,6 +150,10 @@ export function computeTableContentModel(args: {
     ? visibleMatches.slice(0, visCount).map((m) => m.slice(colsOffset))
     : undefined;
   const visHeights = rowHeights.slice(0, visCount);
+  // Keep the table frame anchored to the bottom of the pane even when the
+  // dataset has fewer rows than the available viewport.
+  const fillerHeight = Math.max(0, availableRowHeight - curH);
+  const fillerRow = Array.from({ length: visibleColCount }, () => "");
 
   // Determine selected column index relative to displayed columns
   const selectedColIdx =
@@ -196,6 +200,9 @@ export function computeTableContentModel(args: {
         ).join("");
       })
       .join("") +
+    Array.from({ length: fillerHeight }, () =>
+      buildRowLine(fillerRow, colWidths, wrapMode, 0, undefined, gutterWidth, undefined, false, args.multilineMode ?? false),
+    ).join("") +
     buildBottomSeparatorLine(colWidths, gutterWidth, termW),
   );
 

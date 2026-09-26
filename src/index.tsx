@@ -926,8 +926,8 @@ export function TablensApp({
             wrapMode="none"
           />
         ) : (
-          <EmptyState
-            type={(() => {
+            <EmptyState
+              type={(() => {
               if (headers.length === 0) return "loading";
               if (visibleLayoutColumnIndices.length === 0) return "no-columns";
               if (colSearchQuery.length > 0 && displayColumnIndices.length === 0) return "no-results";
@@ -941,9 +941,11 @@ export function TablensApp({
               if (totalRowCount === 0) return "empty-file";
 
               return "loading";
-            })()}
-            query={colSearchQuery.length > 0 && displayColumnIndices.length === 0 ? colSearchQuery : appliedSearchQuery}
-          />
+              })()}
+              query={colSearchQuery.length > 0 && displayColumnIndices.length === 0 ? colSearchQuery : appliedSearchQuery}
+              width={termW}
+              height={tableH}
+            />
         )}
         <box
           id="cursor-overlay"
