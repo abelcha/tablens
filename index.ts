@@ -12,12 +12,12 @@ import { DirectoryMode } from "src/directory/DirectoryMode";
 import { sniffDbFlavor } from "src/engine/db";
 import { formatError } from "src/utils/error";
 
-export async function launchTablens(options: { file: string; query?: string }) {
-  const { file, query } = options;
+export async function launchTablens(options: { file: string; query?: string; read?: string[] }) {
+  const { file, query, read = [] } = options;
   const source = new Engine();
 
   try {
-    await source.open(buildEngineInput(file, query));
+    await source.open(buildEngineInput(file, query), read);
   } catch (err) {
     console.error(`tablens: ${formatError(err)}`);
     process.exit(1);

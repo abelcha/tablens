@@ -1,14 +1,14 @@
 import { createHash } from "node:crypto";
 import { basename, join } from "node:path";
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 
 function splitSqlStatements(sql: string): string[] {
   const statements: string[] = [];
   let start = 0, quote = false, lineComment = false, blockComment = false;
   for (let i = 0; i < sql.length; i++) {
     const c = sql[i], n = sql[i + 1];
-    if (lineComment) { if (c === "\\n") lineComment = false; continue; }
+    if (lineComment) { if (c === "\n") lineComment = false; continue; }
     if (blockComment) { if (c === "*" && n === "/") { blockComment = false; i++; } continue; }
     if (!quote && c === "-" && n === "-") { lineComment = true; i++; continue; }
     if (!quote && c === "/" && n === "*") { blockComment = true; i++; continue; }
@@ -190,11 +190,9 @@ export class Engine implements TablensEngine {
    * Execute user SQL init files from ~/.config/duckdb/, mirroring ~/.duckdbrc `.read` order
    * (utils.sql defines helpers that macros.sql depends on, e.g. `_join`).
    */
-  private async loadUserMacros(): Promise<void> {
+  private async loadSqlFiles(files: string[]): Promise<void> {
     if (!this.executor) return;
-    const dir = join(homedir(), ".config", "duckdb");
-    for (const name of ['convo.sql',"utils.sql", "macros.sql", "config.sql", "names.sql"]) {
-      const filePath = join(dir, name);
+    for (const filePath of files) {
       if (!existsSync(filePath)) continue;
       try {
         const sql = readFileSync(filePath, "utf8").trim();
@@ -469,13 +467,13 @@ export class Engine implements TablensEngine {
     return this.currentViewSpec ?? { sort: [], filter: {}, search: null };
   }
 
-  async open(input: EngineInput): Promise<EngineSchema> {
+  async open(input: EngineInput, readFiles: string[] = []): Promise<EngineSchema> {
     await this.close();
 
     this.instance = await DuckDBInstance.create();
     this.connection = await this.instance.connect();
     this.executor = new DuckDBSqlExecutor(this.connection);
-    await this.loadUserMacros();
+    await this.loadSqlFiles(readFiles);
     this.getTempDir();
 
     if (input.kind === "parquet") {

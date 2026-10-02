@@ -132,7 +132,7 @@ export interface SqlExecutor {
 }
 
 export interface TablensEngine {
-  open(input: EngineInput): Promise<EngineSchema>;
+  open(input: EngineInput, readFiles?: string[]): Promise<EngineSchema>;
   getSchema(): EngineSchema;
   getPage(request: PageRequest): Promise<PageResult>;
   buildView(spec: ViewSpec): Promise<ViewHandle>;
