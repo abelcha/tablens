@@ -197,7 +197,9 @@ export class Engine implements TablensEngine {
   private async loadUserMacros(): Promise<void> {
     if (!this.executor) return;
     const dir = join(homedir(), ".config", "duckdb");
-    for (const name of ['convo.sql',"utils.sql", "macros.sql", "config.sql", "names.sql"]) {
+    // convo.sql is an interactive-session catalog and adds significant startup
+    // latency; Tablens only needs the shared utility/config macro files here.
+    for (const name of ["utils.sql", "macros.sql", "config.sql", "names.sql"]) {
       const filePath = join(dir, name);
       if (!existsSync(filePath)) continue;
       try {

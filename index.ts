@@ -11,9 +11,12 @@ import { TablensApp } from "src/index";
 import { DirectoryMode } from "src/directory/DirectoryMode";
 import { sniffDbFlavor } from "src/engine/db";
 import { formatError } from "src/utils/error";
-
-export async function launchTablens(options: { file: string; query?: string }) {
-  const { file, query } = options;
+export async function launchTablens(options: {
+  file: string;
+  query?: string;
+  parentPath?: string;
+}) {
+  const { file, query, parentPath } = options;
   const source = new Engine();
 
   try {
@@ -37,12 +40,28 @@ export async function launchTablens(options: { file: string; query?: string }) {
       startInDebugMode: false,
     },
   });
-
   createRoot(renderer).render(
     createElement(TablensApp, {
       file,
       query,
       source,
+      width: undefined,
+      height: undefined,
+      onNavigateLeft: parentPath
+        ? () => {
+            renderer.destroy();
+            void source
+              .close()
+              .catch(() => {})
+              .finally(() => {
+                void launchDirectory(dirname(parentPath), {
+                  initialPath: parentPath,
+                  initialFocus: "preview",
+                  initialTreeVisible: false,
+                });
+              });
+          }
+        : undefined,
     }),
   );
 }
@@ -68,7 +87,6 @@ export async function launchDirectory(
       startInDebugMode: false,
     },
   });
-
   createRoot(renderer).render(
     createElement(DirectoryMode, { rootPath, ...options }),
   );
@@ -136,8 +154,8 @@ Table shortcuts (in app):
     file = "data.csv";
   }
 
-  // Direct tabular files start as a full-width table. At the left edge, the
-  // table reveals this parent-directory explorer with the file still selected.
+  // Direct tabular files open as a full-width table. The parent-directory
+  // explorer is opened on demand with ←/h at the first column.
   if (!query && file) {
     const resolved = resolve(file);
     let isDir = false;
@@ -146,32 +164,17 @@ Table shortcuts (in app):
     } catch {
       // not found — fall through to engine which will surface the error.
     }
-    const kind = classifyPathForLaunch(resolved, isDir);
     if (isDir || sniffDbFlavor(resolved)) {
       await launchDirectory(resolved);
       return;
     }
-    if (kind === "tabular") {
-      await launchDirectory(dirname(resolved), {
-        initialPath: resolved,
-        initialFocus: "preview",
-        initialTreeVisible: false,
-      });
-      return;
-    }
   }
 
-  await launchTablens({ file: file || "data.csv", query });
-}
-
-function classifyPathForLaunch(path: string, isDir: boolean) {
-  // Keep the CLI routing independent of the React tree module's rendering code.
-  const extension = path.toLowerCase().slice(path.lastIndexOf("."));
-  return [".csv", ".tsv", ".parquet", ".json", ".jsonl", ".ndjson"].includes(extension)
-    ? "tabular"
-    : isDir
-      ? "dir"
-      : "other";
+  await launchTablens({
+    file: file || "data.csv",
+    query,
+    parentPath: !query && file ? resolve(file) : undefined,
+  });
 }
 
 if (import.meta.main) {

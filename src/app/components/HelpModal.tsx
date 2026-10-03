@@ -4,6 +4,7 @@ export function HelpModal() {
 │ ↑/k/K        Move up / sort asc                      │
 │ ↓/j/J        Move down / sort desc                   │
 │ ←/h          Move left                               │
+│ ←/h at first column  Open parent directory           │
 │ →/l          Move right                              │
 │ PgUp/PgDn    Page up / page down                     │
 │ Tab          Cycle selection mode                    │
