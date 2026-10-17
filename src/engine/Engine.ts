@@ -23,7 +23,8 @@ function splitSqlStatements(sql: string): string[] {
 function removeCliDirectives(sql: string): string {
   return sql.replace(/^[ \t]*\.[^\r\n]*(?:\r?\n|$)/gm, "");
 }
-import { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
+import type { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
+import { ShimSqlExecutor } from "src/engine/shimExecutor";
 import { DB_ALIAS, attachDatabase } from "./db";
 import type {
   ColumnDistributionRequest,
@@ -479,9 +480,14 @@ export class Engine implements TablensEngine {
   async open(input: EngineInput): Promise<EngineSchema> {
     await this.close();
 
-    this.instance = await DuckDBInstance.create();
-    this.connection = await this.instance.connect();
-    this.executor = new DuckDBSqlExecutor(this.connection);
+    if (process.env.TABLENS_ENGINE === "shim") {
+      this.executor = new ShimSqlExecutor();
+    } else {
+      const { DuckDBInstance } = await import("@duckdb/node-api");
+      this.instance = await DuckDBInstance.create();
+      this.connection = await this.instance.connect();
+      this.executor = new DuckDBSqlExecutor(this.connection);
+    }
     await this.loadUserMacros();
     this.getTempDir();
 
@@ -498,7 +504,7 @@ export class Engine implements TablensEngine {
       const readFunc =
         path.endsWith(".json") || path.endsWith(".jsonl")
           ? `read_json_auto(${this.sqlLiteral(input.path)})`
-          : `read_csv_auto(${this.sqlLiteral(input.path)})`;
+          : `read_csv_auto(${this.sqlLiteral(input.path)}${input.ignoreErrors ? ", ignore_errors=true" : ""})`;
 
       await this.executor.run(
         `COPY (SELECT * FROM ${readFunc}) TO ${this.sqlLiteral(this.activeParquetPath)} (FORMAT PARQUET)`,
@@ -985,6 +991,7 @@ export class Engine implements TablensEngine {
   }
 
   async close(): Promise<void> {
+    if (this.executor instanceof ShimSqlExecutor) this.executor.close();
     try {
       this.connection?.disconnectSync();
     } catch {

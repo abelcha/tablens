@@ -15,7 +15,8 @@
   },
   "scripts": {
     "dev": "bun run --watch index.ts",
-    "tablens": "bun run index.ts"
+    "tablens": "bun run index.ts",
+    "build": "bun scripts/build.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",
@@ -28,6 +29,7 @@
     "@duckdb/node-api": "1.5.5-r.4",
     "@opentui/core": "^0.2.14",
     "@opentui/react": "^0.2.14",
+    "duckdb-bun-shim": "github:abelcha/bun-sqlite-duckdb-shim#v0.1.6",
     "react": "^19.2.3"
   }
 }

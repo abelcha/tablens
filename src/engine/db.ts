@@ -1,5 +1,4 @@
 import { openSync, readSync, closeSync } from "node:fs";
-import { DuckDBInstance } from "@duckdb/node-api";
 import type { SqlExecutor } from "./types";
 
 export const DB_ALIAS = "tablens_db";
@@ -53,6 +52,7 @@ export async function attachDatabase(
  * DuckDB so the tree can list tables without owning a long-lived connection.
  */
 export async function listDbTables(path: string): Promise<string[]> {
+  const { DuckDBInstance } = await import("@duckdb/node-api");
   const instance = await DuckDBInstance.create();
   const connection = await instance.connect();
   const executor = { run: (sql: string) => connection.run(sql) } as unknown as SqlExecutor;
@@ -81,6 +81,7 @@ export async function countDbTableRows(path: string, table: string): Promise<num
 export async function countDbTablesRows(path: string, tables: string[]): Promise<Map<string, number>> {
   const counts = new Map<string, number>();
   if (tables.length === 0) return counts;
+  const { DuckDBInstance } = await import("@duckdb/node-api");
   const instance = await DuckDBInstance.create();
   const connection = await instance.connect();
   const executor = { run: (sql: string) => connection.run(sql) } as unknown as SqlExecutor;

@@ -8,6 +8,7 @@
         "@duckdb/node-api": "1.5.5-r.4",
         "@opentui/core": "^0.2.14",
         "@opentui/react": "^0.2.14",
+        "duckdb-bun-shim": "github:abelcha/bun-sqlite-duckdb-shim#v0.1.6",
         "react": "^19.2.3",
       },
       "devDependencies": {
@@ -73,6 +74,8 @@
     "detect-libc": ["detect-libc@2.1.2", "", {}, "sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ=="],
 
     "diff": ["diff@9.0.0", "", {}, "sha512-svtcdpS8CgJyqAjEQIXdb3OjhFVVYjzGAPO8WGCmRbrml64SPw/jJD4GoE98aR7r25A0XcgrK3F02yw9R/vhQw=="],
+
+    "duckdb-bun-shim": ["duckdb-bun-shim@github:abelcha/bun-sqlite-duckdb-shim#e564371", {}, "abelcha-bun-sqlite-duckdb-shim-e564371", "sha512-MZM512JJmfcy1A6Vfw+8xGcvdlY5IrK4XL69WG2mvcQew2JRuYoGtT/Dq2PnP4QL24eTjc+bhYC42cKMMm7iHQ=="],
 
     "emoji-regex": ["emoji-regex@10.6.0", "", {}, "sha512-toUI84YS5YmxW219erniWD0CIVOo46xGKColeNQRgOzDorgBi1v4D71/OFzgD9GO2UGKIv1C3Sp8DAn0+j5w7A=="],
 

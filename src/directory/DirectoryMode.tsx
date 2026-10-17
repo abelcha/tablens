@@ -35,7 +35,7 @@ type PreviewState =
   | { kind: "table"; file: string; label: string; engine: Engine }
   | { kind: "text"; file: string }
   | { kind: "binary"; file: string }
-  | { kind: "error"; file: string; message: string };
+  | { kind: "error"; file: string; message: string; retryable: boolean };
 
 type TreeInfoMode = "none" | "size" | "lines";
 
@@ -93,6 +93,7 @@ export function DirectoryMode({
   // Keep opened tables alive while navigating the explorer.
   const enginesRef = useRef<Map<string, Engine>>(new Map());
   const previewLoadRef = useRef(0);
+  const retryPreviewRef = useRef<(() => void) | null>(null);
 
   // Close engine on unmount.
   useEffect(() => {
@@ -206,6 +207,7 @@ export function DirectoryMode({
   const previewKey = previewKeyFor(cursorNode);
   useEffect(() => {
     const loadId = ++previewLoadRef.current;
+    retryPreviewRef.current = null;
     if (!cursorNode || previewKey === null) {
       setPreview({ kind: "idle" });
       return;
@@ -237,24 +239,38 @@ export function DirectoryMode({
         : { kind: "loading", file: previewKey },
     );
 
-    const handle = setTimeout(async () => {
-      const engine = new Engine();
-      try {
-        const input =
-          node.kind === "table"
-            ? ({ kind: "db", path: node.dbPath!, table: node.table! } as const)
-            : buildEngineInput(node.path);
-        await engine.open(input);
-        if (previewLoadRef.current !== loadId) {
+    const handle = setTimeout(() => {
+      const load = async (ignoreErrors = false) => {
+        const engine = new Engine();
+        try {
+          const input =
+            node.kind === "table"
+              ? ({ kind: "db", path: node.dbPath!, table: node.table! } as const)
+              : { ...buildEngineInput(node.path), ...(ignoreErrors ? { ignoreErrors: true } : {}) };
+          await engine.open(input);
+          if (previewLoadRef.current !== loadId) {
+            await engine.close().catch(() => {});
+            return;
+          }
+          enginesRef.current.set(previewKey, engine);
+          retryPreviewRef.current = null;
+          setPreview({ kind: "table", file: previewKey, label, engine });
+        } catch (err) {
           await engine.close().catch(() => {});
-          return;
+          const message = formatError(err);
+          const retryable = node.kind !== "table" &&
+            /read_csv|csv error|invalid unicode|ignore_errors/i.test(message);
+          if (retryable) {
+            retryPreviewRef.current = () => {
+              retryPreviewRef.current = null;
+              setPreview({ kind: "loading", file: previewKey });
+              void load(true);
+            };
+          }
+          setPreview({ kind: "error", file: previewKey, message, retryable });
         }
-        enginesRef.current.set(previewKey, engine);
-        setPreview({ kind: "table", file: previewKey, label, engine });
-      } catch (err) {
-        await engine.close().catch(() => {});
-        setPreview({ kind: "error", file: previewKey, message: formatError(err) });
-      }
+      };
+      void load();
     }, 120);
 
     return () => clearTimeout(handle);
@@ -314,6 +330,17 @@ export function DirectoryMode({
         setFocus("tree");
       }
       return;
+    }
+
+    if (previewRef.current.kind === "error" && previewRef.current.retryable) {
+      if (key.name === "r") {
+        retryPreviewRef.current?.();
+        return;
+      }
+      if (key.name === "escape") {
+        setPreview({ kind: "idle" });
+        return;
+      }
     }
 
     // When focus is on the table, only Tab (handled above) and the global quit
@@ -505,12 +532,29 @@ export function DirectoryMode({
         return <LoadingSkeleton width={activePreviewWidth} height={termH - 1} />;
       case "error":
         return (
-          <CenteredMessage
-            icon="✕"
-            title="Failed to load"
-            sub={preview.message}
-            iconColor="#FF4444"
-          />
+          <box
+            width="100%"
+            height="100%"
+            alignItems="center"
+            justifyContent="center"
+            flexDirection="column"
+          >
+            <box
+              width={Math.max(20, Math.min(activePreviewWidth - 4, 92))}
+              border={true}
+              borderStyle="single"
+              borderColor="#FFAA00"
+              backgroundColor="#2a2418"
+              padding={1}
+              flexDirection="column"
+            >
+              <text content="⚠  Failed to load CSV" fg="#FFAA00" />
+              <text content={preview.message} fg="#FFCC88" marginTop={1} />
+              {preview.retryable ? (
+                <text content="Press r to rerun with ignore_errors=true · Esc to dismiss" fg="#FFFFFF" marginTop={1} />
+              ) : null}
+            </box>
+          </box>
         );
       case "idle":
       default:

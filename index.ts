@@ -104,9 +104,14 @@ async function main() {
         type: "boolean",
         short: "h",
       },
+      "duckdb-engine": {
+        type: "string",
+      },
     },
     allowPositionals: true,
   });
+
+  if (values["duckdb-engine"]) process.env.TABLENS_ENGINE = values["duckdb-engine"];
 
   if (values.help) {
     console.log(`
@@ -122,6 +127,7 @@ Arguments:
 
 Options:
   -q, --query <sql> Execute SQL query instead of loading file
+  --duckdb-engine <node|shim>  DuckDB driver: @duckdb/node-api (default) or bun:sqlite shim
   -h, --help        Show this help message
 
 Explorer shortcuts:
