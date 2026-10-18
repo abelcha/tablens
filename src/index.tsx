@@ -28,6 +28,8 @@ import { QueryEditor } from "src/app/components/QueryEditor";
 import { HelpModal } from "src/app/components/HelpModal";
 import { ColumnFilterModal } from "src/app/components/ColumnFilterModal";
 import { ColumnManagerModal } from "src/app/components/ColumnManagerModal";
+import { Inspector } from "src/app/components/Inspector";
+import { colorizeJsonLine, valueLines } from "src/utils/json";
 import { parseInlineMarkup } from "src/app/markup";
 import { formatError } from "src/utils/error";
 import type { PageWindowCache } from "src/app/viewport";
@@ -54,6 +56,7 @@ export function TablensApp({
   height,
   keyboardEnabled = true,
   onNavigateLeft,
+  onClose,
 }: {
   file: string;
   query?: string;
@@ -66,6 +69,8 @@ export function TablensApp({
   keyboardEnabled?: boolean;
   /** Called instead of moving left when the cursor is already at the first column. */
   onNavigateLeft?: () => void;
+  /** Called on Escape (nested column table). */
+  onClose?: () => void;
 }) {
   const renderer = useRenderer();
   const [state, dispatch] = useReducer(reducer, initialState());
@@ -79,8 +84,15 @@ export function TablensApp({
     renderer.console.bounds?.height
       ? Number(renderer.console.bounds.height) || 0
       : 0;
-  const termH = height ?? Math.max(1, renderer.terminalHeight - consoleHeight);
-  const termW = width ?? renderer.terminalWidth;
+  const fullH = height ?? Math.max(1, renderer.terminalHeight - consoleHeight);
+  const fullW = width ?? renderer.terminalWidth;
+  // Inspector pane: beside the table on wide terminals, below it otherwise.
+  const inspectorPane = state.inspector === "pane";
+  const paneSide = inspectorPane && fullW >= 140;
+  const paneW = paneSide ? Math.floor(fullW * 0.4) : fullW;
+  const paneH = paneSide ? fullH : Math.floor(fullH * 0.4);
+  const termW = paneSide ? fullW - paneW : fullW;
+  const termH = inspectorPane && !paneSide ? fullH - paneH : fullH;
   const tableH = Math.max(1, termH - 1);
   const [terminalBgColor, setTerminalBgColor] = useState<string>("#1e1e1e");
 
@@ -830,6 +842,97 @@ export function TablensApp({
     tableH,
   ]);
 
+  // Inspector. Row mode: the record as JSON; cell mode: the cell; column mode: the column expanded
+  // (struct fields → sub-columns, lists → sub-rows) for the rows on screen, aligned with the table.
+  const inspectorOn = state.inspector !== "off";
+  const inspectorZoom = state.inspector === "zoom";
+  const inspectorW = inspectorZoom ? fullW : paneW;
+  const inspectorH = inspectorZoom ? fullH : paneH;
+  const inspectorRef = useRef<any>(null);
+  const inspectorRel = Math.max(0, Math.min(visibleRowIds.length - 1, cursorRow - rowsOffset));
+  const inspectorRowId = visibleRowIds[inspectorRel];
+  const [inspectorRow, setInspectorRow] = useState<{ rowId: number; row: Record<string, unknown> } | null>(null);
+  const expandIds = useMemo(
+    () => (inspectorOn && selectionMode === "column" ? visibleRowIds.slice(0, inspectorZoom ? undefined : tableH) : []),
+    [inspectorOn, selectionMode, visibleRowIds, inspectorZoom, tableH],
+  );
+  const expandKey = `${cursorCol}:${expandIds.join(",")}`;
+  const [expanded, setExpanded] = useState<{ key: string; columns: string[]; rows: string[][]; parentRowIds: number[] } | null>(null);
+  useEffect(() => {
+    if (!inspectorOn) return;
+    let stale = false;
+    if (selectionMode === "column") {
+      if (expanded?.key === expandKey || expandIds.length === 0) return;
+      source
+        .expandColumn(headers[cursorCol]!, expandIds)
+        .then((res) => { if (!stale) setExpanded({ key: expandKey, ...res }); })
+        .catch((err) => console.error("Expand failed:", err));
+    } else if (inspectorRowId !== undefined && inspectorRow?.rowId !== inspectorRowId) {
+      source
+        .getRowJson(inspectorRowId, headers)
+        .then((row) => { if (!stale) setInspectorRow({ rowId: inspectorRowId, row }); })
+        .catch((err) => console.error("Inspect failed:", err));
+    }
+    return () => { stale = true; };
+  }, [inspectorOn, selectionMode, expandKey, expanded?.key, expandIds, inspectorRowId, inspectorRow?.rowId, source, headers, cursorCol]);
+  useEffect(() => {
+    if (inspectorOn && state.columnTypes.length === 0)
+      source.getColumnTypes().then((types) => dispatch({ type: "SET_COLUMN_TYPES", types }));
+  }, [inspectorOn, state.columnTypes.length, source]);
+  const inspectorView = useMemo(() => {
+    const col = headers[cursorCol] ?? "";
+    const type = state.columnTypes[cursorCol];
+    const title = selectionMode === "row" ? `row ${cursorRow + 1}` : `${col}${type ? ` · ${type}` : ""}`;
+    if (selectionMode === "column") {
+      const exp = expanded?.key === expandKey ? expanded : null;
+      if (!exp || exp.rows.length === 0) return { title, body: parseInlineMarkup("…"), text: "" };
+      const table = computeTableContentModel({
+        headers: exp.columns,
+        visibleRows: exp.rows,
+        visibleRowIds: exp.parentRowIds,
+        rowNumbers: exp.parentRowIds.map((id) => rowsOffset + visibleRowIds.indexOf(id) + 1),
+        rowsOffset: 0,
+        colsOffset: 0,
+        wrapMode: "disabled",
+        columnOverrides: {},
+        termW: inspectorW - 3,
+        termH: exp.rows.length + 4,
+        totalRowCount: exp.rows.length,
+        columnWidthMode: state.columnWidthMode,
+      });
+      return { title, body: table.content, text: exp.rows.map((r) => r.join("\t")).join("\n") };
+    }
+    const row = inspectorRow && inspectorRow.rowId === inspectorRowId ? inspectorRow.row : null;
+    const value =
+      row === null ? null
+      : selectionMode === "row" ? Object.fromEntries(displayColumnIndices.map((i) => [headers[i]!, row[headers[i]!]]))
+      : row[col];
+    const lines = row === null ? ["…"] : valueLines(value, Math.max(1, inspectorW - 5));
+    const isJson = typeof value !== "string";
+    const esc = (l: string) => l.replace(/\{/g, "\\{").replace(/\}/g, "\\}");
+    const body = parseInlineMarkup(lines.map((l) => (isJson ? colorizeJsonLine(l) : `{lightgray}${esc(l)}{/lightgray}`)).join("\n"));
+    return { title, body, text: isJson ? lines.join("\n") : String(value) };
+  }, [headers, cursorCol, cursorRow, rowsOffset, visibleRowIds, inspectorRow, inspectorRowId, expanded, expandKey, selectionMode, displayColumnIndices, state.columnTypes, state.columnWidthMode, inspectorW]);
+  useEffect(() => {
+    if (inspectorRef.current) inspectorRef.current.scrollTop = 0;
+  }, [inspectorView.body]);
+
+  // Column mode V: the expanded column becomes a full tablens table (nested app) over the whole source.
+  const [drill, setDrill] = useState<{ engine: Engine; label: string } | null>(null);
+  const openColumnTable = useCallback(() => {
+    const col = headers[cursorCol];
+    if (!col) return;
+    const engine = new Engine();
+    engine
+      .open({ kind: "query", sql: source.expandColumnQuery(col) })
+      .then(() => setDrill({ engine, label: `${file} › ${col}` }))
+      .catch((err) => console.error("Expand failed:", err));
+  }, [headers, cursorCol, source, file]);
+  const closeDrill = useCallback(() => {
+    drill?.engine.close().catch(() => {});
+    setDrill(null);
+  }, [drill]);
+
   const cursorStyle = useMemo(() => {
     if (!tableContent) return { visible: false };
 
@@ -859,9 +962,8 @@ export function TablensApp({
   }, [state.selectionMode, cursorDisplayColIndex, sortDisplayColIndex, sorter?.direction, tableContent, displayColumnIndices, headers, colsOffset]);
 
   useKeyboard((key: KeyEvent) => {
-    if (!keyboardEnabled) return;
-    if (
-      onNavigateLeft &&
+    if (!keyboardEnabled || drill) return;
+    const noOverlay =
       !state.showHelp &&
       !state.showColumnFilter &&
       !state.columnManagerActive &&
@@ -870,9 +972,12 @@ export function TablensApp({
       !state.renameActive &&
       !state.savePathPromptActive &&
       !state.queryEditorActive &&
-      !key.shift &&
-      (key.name === "left" || key.name === "h")
-    ) {
+      state.inspector !== "zoom";
+    if (onClose && noOverlay && key.name === "escape" && !renderer.console.visible) {
+      onClose();
+      return;
+    }
+    if (onNavigateLeft && noOverlay && !key.shift && (key.name === "left" || key.name === "h")) {
       const firstColumn = displayColumnIndices[0];
       const isAtLeftEdge =
         state.selectionMode === "row"
@@ -898,13 +1003,29 @@ export function TablensApp({
       handleQuerySubmit,
       tableContent,
       visibleColumnIndices: displayColumnIndices,
+      inspector: { text: inspectorView.text, box: inspectorRef },
+      openColumnTable,
       consoleCaptureRef,
     });
   });
 
+  if (drill) {
+    return (
+      <TablensApp
+        file={drill.label}
+        source={drill.engine}
+        width={fullW}
+        height={fullH}
+        onNavigateLeft={closeDrill}
+        onClose={closeDrill}
+      />
+    );
+  }
+
   return (
+    <box id="tablens-root" width={fullW} height={fullH} flexDirection={paneSide ? "row" : "column"}>
     <box
-      id="tablens-root"
+      id="tablens-table"
       width={termW}
       height={termH}
       flexDirection="column"
@@ -1099,6 +1220,17 @@ export function TablensApp({
         />
       )}
       {state.showHelp && <HelpModal />}
+    </box>
+    {inspectorOn && (
+      <Inspector
+        ref={inspectorRef}
+        title={inspectorView.title}
+        body={inspectorView.body}
+        width={inspectorW}
+        height={inspectorH}
+        zoom={inspectorZoom}
+      />
+    )}
     </box>
   );
 }

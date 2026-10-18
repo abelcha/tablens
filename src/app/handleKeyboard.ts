@@ -4,6 +4,7 @@ import type { Action } from "src/app/actions";
 import { keyToActions } from "src/app/keyboard";
 import type { TableContentModel } from "src/app/render";
 import { initialState } from "src/app/state";
+import { copyToClipboard } from "src/utils/clipboard";
 
 type AppState = ReturnType<typeof initialState>;
 
@@ -48,6 +49,8 @@ export type KeyboardContext = {
     destroy: () => void;
     terminalHeight: number;
     console: ConsoleHandle;
+    suspend: () => void;
+    resume: () => void;
   };
   source: Engine;
   state: AppState;
@@ -61,6 +64,10 @@ export type KeyboardContext = {
   handleSavePathSubmit: (path: string) => void;
   handleQuerySubmit: (sql: string) => void;
   tableContent: TableContentModel | null;
+  /** Inspector text for yank, and its scrollbox renderable for keyboard scrolling. */
+  /** Column mode V: open the expanded column as its own table. */
+  openColumnTable: () => void;
+  inspector: { text: string; box: { current: { scrollBy: (n: number) => void; scrollTop: number; scrollHeight: number; height: number } | null } };
   /** Tracks console keyboard focus; synced on toggle / escape */
   consoleCaptureRef?: { current: boolean };
 };
@@ -81,6 +88,8 @@ export function handleTablensKey(key: KeyEvent, ctx: KeyboardContext): void {
     handleSavePathSubmit,
     handleQuerySubmit,
     tableContent,
+    inspector,
+    openColumnTable,
     consoleCaptureRef,
   } = ctx;
 
@@ -127,6 +136,33 @@ export function handleTablensKey(key: KeyEvent, ctx: KeyboardContext): void {
 
   if (state.showHelp) {
     dispatch({ type: "TOGGLE_HELP" });
+    return;
+  }
+
+  const openExternalViewer = () => {
+    renderer.suspend();
+    Bun.spawnSync([process.env.TABLENS_JSON_VIEWER || "jless"], {
+      stdin: Buffer.from(inspector.text),
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    renderer.resume();
+  };
+
+  if (state.inspector === "zoom") {
+    const box = inspector.box.current;
+    const scroll = (delta: number) => box?.scrollBy(delta);
+    const half = Math.ceil((box?.height ?? 2) / 2);
+    if (key.name === "escape" || key.name === "q") dispatch({ type: "SET_INSPECTOR", mode: "off" });
+    else if (key.name === "V" || (key.shift && key.name === "v")) dispatch({ type: "SET_INSPECTOR", mode: "pane" });
+    else if (key.name === "down" || key.name === "j") scroll(1);
+    else if (key.name === "up" || key.name === "k") scroll(-1);
+    else if (key.name === "pagedown" || key.name === "d") scroll(half);
+    else if (key.name === "pageup" || key.name === "u") scroll(-half);
+    else if (key.name === "end" || key.name === "G" || (key.shift && key.name === "g")) { if (box) box.scrollTop = box.scrollHeight; }
+    else if (key.name === "home" || key.name === "g") { if (box) box.scrollTop = 0; }
+    else if (key.name === "y") copyToClipboard(inspector.text).catch(() => {});
+    else if (key.name === "o") openExternalViewer();
     return;
   }
 
@@ -384,6 +420,24 @@ export function handleTablensKey(key: KeyEvent, ctx: KeyboardContext): void {
       handleQuerySubmit(text);
       return;
     }
+    return;
+  }
+
+  if (key.name === "V" || (key.shift && key.name === "v")) {
+    if (state.selectionMode === "column") openColumnTable();
+    else dispatch({ type: "SET_INSPECTOR", mode: "zoom" });
+    return;
+  }
+  if (key.name === "v") {
+    dispatch({ type: "SET_INSPECTOR", mode: state.inspector === "off" ? "pane" : "off" });
+    return;
+  }
+  if (key.name === "o" && state.inspector === "pane") {
+    openExternalViewer();
+    return;
+  }
+  if ((key.name === "return" || key.name === "enter") && state.selectionMode === "cell") {
+    dispatch({ type: "SET_INSPECTOR", mode: "zoom" });
     return;
   }
 

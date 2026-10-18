@@ -116,6 +116,7 @@ export function initialState(): ExtendedState {
     showStats: false,
     columnStats: [],
     showHelp: false,
+    inspector: "off",
     columnWidthMode: "compact",
     colSearchActive: false,
     colSearchQuery: "",
@@ -614,6 +615,8 @@ export function reducer(state: ExtendedState, action: Action): ExtendedState {
       return { ...state, columnStats: action.stats };
     case "TOGGLE_HELP":
       return { ...state, showHelp: !state.showHelp };
+    case "SET_INSPECTOR":
+      return { ...state, inspector: action.mode };
     case "CYCLE_COLUMN_WIDTH_MODE": {
       const next =
         state.columnWidthMode === "compact"

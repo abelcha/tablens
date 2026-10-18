@@ -44,6 +44,8 @@ export function computeTableContentModel(args: {
   columnWidthMode?: ColumnWidthMode;
   sortColumnInHeaders?: number;
   sortDirection?: "asc" | "desc";
+  /** Gutter numbers per row, when they are not rowsOffset + i + 1 (inspector sub-table). */
+  rowNumbers?: number[];
 }): TableContentModel {
   const {
     headers,
@@ -71,7 +73,7 @@ export function computeTableContentModel(args: {
 
   // Calculate gutter width based on estimated max visible row
   const estimatedPageSize = Math.max(termH - 4, 10);
-  const maxVisibleRow = Math.min(rowsOffset + estimatedPageSize, totalRowCount);
+  const maxVisibleRow = args.rowNumbers?.at(-1) ?? Math.min(rowsOffset + estimatedPageSize, totalRowCount);
   let gutterWidth = String(maxVisibleRow).length + 1;
   const dataPadding = 2; // "│ "
   let tableW = termW - gutterWidth - dataPadding;
@@ -138,7 +140,7 @@ export function computeTableContentModel(args: {
   }
 
   // Recalculate gutter width based on actual visible rows
-  const actualMaxVisibleRow = rowsOffset + visCount;
+  const actualMaxVisibleRow = args.rowNumbers?.at(-1) ?? rowsOffset + visCount;
   const newGutterWidth = String(actualMaxVisibleRow).length + 1;
   if (newGutterWidth !== gutterWidth) {
     gutterWidth = newGutterWidth;
@@ -192,7 +194,7 @@ export function computeTableContentModel(args: {
     buildSeparatorLine(colWidths, gutterWidth, termW) +
     visRows
       .map((r, i) => {
-        const rowNum = rowsOffset + i + 1;
+        const rowNum = args.rowNumbers?.[i] ?? rowsOffset + i + 1;
         const rowId = visRowIds[i];
         const isMarked = rowId !== undefined ? markedRows?.has(rowId) === true : false;
         return Array.from({ length: visHeights[i] || 1 }, (_, h) =>

@@ -44,6 +44,7 @@ export interface State {
   showStats: boolean;
   columnStats: string[];
   showHelp: boolean;
+  inspector: "off" | "pane" | "zoom";
   columnWidthMode: ColumnWidthMode;
   colSearchActive: boolean;
   colSearchQuery: string;

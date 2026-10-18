@@ -13,4 +13,4 @@ webgpu-table
 
 *.xml
 *.csv
-*.parquet
+*.parquetbuild

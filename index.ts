@@ -146,6 +146,9 @@ Table shortcuts (in app):
   f                  Filter column (column mode)
   t                  Toggle column types
   i                  Toggle column stats
+  v / V              Inspect pane / full screen: row = record, cell = value,
+                     column = struct fields / list items (V opens it as a table, Esc back)
+  o                  Open inspected value in $TABLENS_JSON_VIEWER (jless)
   s                  Export current view
   x                  Auto-resize columns
   :                  Query editor

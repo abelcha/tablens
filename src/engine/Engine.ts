@@ -856,6 +856,56 @@ export class Engine implements TablensEngine {
     throw new Error("Editing is disabled in v2");
   }
 
+  /** One row as a JSON object keyed by column name (nested types stay nested). */
+  async getRowJson(rowId: number, columns: string[]): Promise<Record<string, unknown>> {
+    this.ensureReady();
+    const fields = columns.map((c) => `${this.sqlLiteral(c)}: ${this.safeColumnExpr(c)}`).join(", ");
+    const result = await this.executor!.run(`
+      SELECT to_json({${fields}})
+      FROM read_parquet(${this.sqlLiteral(this.activeParquetPath)}, file_row_number=true) p
+      WHERE file_row_number = ${Math.floor(rowId)}
+    `);
+    return JSON.parse(String(result.rows[0]?.[0] ?? "{}"));
+  }
+
+  /**
+   * One column for the given rows, struct fields flattened to columns and lists unnested to rows
+   * (DuckDB `unnest(recursive := true)`); scalar columns come back as a single column.
+   */
+  async expandColumn(column: string, rowIds: number[]): Promise<{ columns: string[]; rows: string[][]; parentRowIds: number[] }> {
+    this.ensureReady();
+    if (rowIds.length === 0) return { columns: [], rows: [], parentRowIds: [] };
+    const expr = this.expandExpr(column);
+    const ids = `[${rowIds.map((id) => Math.floor(id)).join(",")}]`;
+    const result = await this.executor!.run(`
+      SELECT file_row_number, ${expr}
+      FROM (
+        SELECT * FROM read_parquet(${this.sqlLiteral(this.activeParquetPath)}, file_row_number=true)
+        WHERE file_row_number IN (SELECT unnest(${ids}))
+        ORDER BY list_position(${ids}, file_row_number)
+      ) p
+    `);
+    return {
+      columns: result.columns.slice(1),
+      parentRowIds: result.rows.map((row) => Number(row[0])),
+      rows: result.rows.map((row) => row.slice(1).map((value) => this.valueToString(value))),
+    };
+  }
+
+  private expandExpr(column: string): string {
+    const type = (this.sourceColumnTypes[this.sourceColumns.indexOf(column)] ?? "").toUpperCase();
+    const col = this.quoteIdent(column);
+    if (type.startsWith("STRUCT") || /STRUCT.*\]$/.test(type)) return `unnest(p.${col}, recursive := true)`;
+    if (type.endsWith("]")) return `unnest(p.${col}) AS ${col}`;
+    return `${this.safeColumnExpr(column)} AS ${col}`;
+  }
+
+  /** SQL for a standalone table of one expanded column over the whole current source (opened in a nested app). */
+  expandColumnQuery(column: string): string {
+    this.ensureReady();
+    return `SELECT row_number() OVER () AS row, ${this.expandExpr(column)} FROM (${this.normalizeQuerySql(this.getQuery())}) p`;
+  }
+
   async getColumnTypes(): Promise<string[]> {
     this.ensureReady();
     return [...this.sourceColumnTypes];

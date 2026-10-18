@@ -21,6 +21,12 @@ export function HelpModal() {
 │ t            Toggle column type display              │
 │ i            Toggle inline column stats              │
 │ Shift+↑/↓    Reorder selected column in modal        │
+│ v            Inspect pane: row = record, cell = value│
+│              column = struct fields / list items     │
+│ V            Full screen; in column mode the column  │
+│              opens as its own table (Esc/← back)     │
+│ Enter        Full-screen inspect (cell mode)         │
+│ o            Open inspected value in jless           │
 │ . or >       Resize column wider                     │
 │ , or <       Resize column narrower                  │
 ├─ SORTING ────────────────────────────────────────────┤
@@ -36,7 +42,7 @@ export function HelpModal() {
       top={3}
       left={4}
       width={74}
-      height={28}
+      height={helpText.split("\n").length + 1}
       style={{
         borderStyle: "single" as any,
       }}

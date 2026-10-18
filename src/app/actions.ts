@@ -58,6 +58,7 @@ export type Action =
     rowsOffset: number;
   }
   | { type: "TOGGLE_HELP" }
+  | { type: "SET_INSPECTOR"; mode: "off" | "pane" | "zoom" }
   | { type: "CYCLE_COLUMN_WIDTH_MODE" }
   | { type: "CLEAR_SCROLL_SPEED" }
     | { type: "ENTER_COL_SEARCH" }
